@@ -15,25 +15,35 @@ export function backtestCompany(raw, asOf) {
   const cutoffs = [...new Set(Object.values(raw.facts?.['us-gaap'] || {}).flatMap((c) =>
     Object.values(c.units || {}).flat().filter((p) => /^10-[QK]$/.test(p.form) && p.filed <= asOf && p.filed >= '2018-01-01').map((p) => p.filed)))].sort();
   const folds = [];
+  const audit = { cutoffs: cutoffs.length, withheld: {}, duplicateHorizons: 0, incompleteOutcomes: 0 };
   const seen = new Set();
   for (const cutoff of cutoffs) {
     const input = companyFactsModelInput(raw, cutoff);
     const forecast = forecastFundamentals(input);
-    if (forecast.status !== 'estimated' || seen.has(forecast.period.start)) continue;
+    if (forecast.status !== 'estimated') {
+      audit.withheld[forecast.reason] = (audit.withheld[forecast.reason] || 0) + 1;
+      continue;
+    }
+    if (seen.has(forecast.period.start)) { audit.duplicateHorizons++; continue; }
     const actual = truth.quarters.filter((q) => q.start >= forecast.period.start).slice(0, 4);
     if (actual.length !== 4 || actual[0].start !== forecast.period.start
       || Math.abs(daysBetween(actual.at(-1).end, forecast.period.end)) > 7
       || actual.some((q, i) => q.knownAt > asOf || !(q.revenue > 0)
-        || (i && daysBetween(actual[i - 1].end, q.start) !== 1))) continue;
+        || (i && daysBetween(actual[i - 1].end, q.start) !== 1))) { audit.incompleteOutcomes++; continue; }
     seen.add(forecast.period.start);
     const revenue = sum(actual.map((q) => q.revenue));
     const actualNet = actual.every((q) => Number.isFinite(q.netIncome)) ? sum(actual.map((q) => q.netIncome)) : null;
     const predictedNet = forecast.earningsReason ? null : sum(forecast.scenarios.base.quarters.map((q) => q.netIncome));
     const baselineNet = forecast.earningsReason ? null : sum(input.quarters.slice(-4).map((q) => q.netIncome));
-    folds.push({ cutoff, period: forecast.period, revenue: { predicted: forecast.scenarios.base.revenue,
+    const scale = forecast.baselines.revenue;
+    const scaledError = (estimate, observed) => Number.isFinite(estimate) && Number.isFinite(observed)
+      && scale > 0 ? Math.abs(estimate - observed) / scale : null;
+    folds.push({ cutoff, earningsReason: forecast.earningsReason, period: forecast.period, revenue: { predicted: forecast.scenarios.base.revenue,
       actual: revenue, baseline: forecast.baselines.revenue, error: ape(forecast.scenarios.base.revenue, revenue),
       baselineError: ape(forecast.baselines.revenue, revenue) }, earnings: { predicted: predictedNet,
-      actual: actualNet, baseline: baselineNet, error: ape(predictedNet, actualNet), baselineError: ape(baselineNet, actualNet) } });
+      actual: actualNet, baseline: baselineNet, error: ape(predictedNet, actualNet), baselineError: ape(baselineNet, actualNet),
+      errorAsShareOfTrailingRevenue: scaledError(predictedNet, actualNet),
+      baselineErrorAsShareOfTrailingRevenue: scaledError(baselineNet, actualNet) } });
   }
   const summary = Object.fromEntries(['revenue', 'earnings'].map((metric) => {
     const rows = folds.filter((f) => f[metric].error != null && f[metric].baselineError != null);
@@ -41,10 +51,23 @@ export function backtestCompany(raw, asOf) {
       baselineMape: mean(rows.map((f) => f[metric].baselineError)),
       winRate: mean(rows.map((f) => Number(f[metric].error < f[metric].baselineError))) }];
   }));
-  return { summary, folds, limitations: ['Overlapping forecast windows, not independent observations.',
+  const scoredEarnings = folds.filter(f => f.earnings.errorAsShareOfTrailingRevenue != null
+    && f.earnings.baselineErrorAsShareOfTrailingRevenue != null);
+  summary.earnings.includingLosses = {
+    observations: scoredEarnings.length,
+    nonpositiveOutcomes: scoredEarnings.filter(f => f.earnings.actual <= 0).length,
+    meanAbsoluteErrorAsShareOfTrailingRevenue: mean(scoredEarnings.map(f => f.earnings.errorAsShareOfTrailingRevenue)),
+    baselineMeanAbsoluteErrorAsShareOfTrailingRevenue: mean(scoredEarnings.map(f => f.earnings.baselineErrorAsShareOfTrailingRevenue)),
+  };
+  audit.earningsWithheld = {};
+  for (const fold of folds) if (fold.earningsReason)
+    audit.earningsWithheld[fold.earningsReason] = (audit.earningsWithheld[fold.earningsReason] || 0) + 1;
+  audit.missingEarningsOutcomes = folds.filter(f => !Number.isFinite(f.earnings.actual)).length;
+  return { summary, audit, folds, limitations: ['Overlapping forecast windows, not independent observations.',
     'Actuals use latest available restatements; input selection uses each historical SEC publication cutoff.',
     'Current company sample has survivorship bias; this is not a universe-wide performance claim.',
-    'Earnings backtest measures net income, not adjusted consensus EPS.'] };
+    'Earnings backtest measures net income, not adjusted consensus EPS.',
+    'MAPE excludes nonpositive outcomes; the trailing-revenue-scaled earnings error includes losses and zero outcomes.'] };
 }
 
 export function comparePublished(forecast, priced, reference) {

@@ -1,5 +1,5 @@
 // Research model only. Scenario bounds are sensitivity assumptions, not confidence intervals.
-export const FORWARD_MODEL_VERSION = 'forward-fundamentals-1';
+export const FORWARD_MODEL_VERSION = 'forward-fundamentals-2';
 const DAY = 86400000;
 export const validDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)
   && Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0, 10) === v;
@@ -25,6 +25,7 @@ export function forecastFundamentals({ quarters, asOf, currency, eligibility = {
     if (![q.start, q.end, q.knownAt].every(validDate) || q.knownAt > asOf || q.end >= q.knownAt
       || daysBetween(q.start, q.end) < 70 || daysBetween(q.start, q.end) > 110
       || (i && q.start !== addDays(qs[i - 1].end, 1))) return fail('invalid-periods');
+    if (q.revenueBasisIssue) return fail('inconsistent-revenue-basis');
     if (q.currency !== currency || !finite(q.revenue) || q.revenue <= 0) return fail('invalid-revenue');
   }
   const last = qs.at(-1);
@@ -65,7 +66,7 @@ export function forecastFundamentals({ quarters, asOf, currency, eligibility = {
   const commonDrag = !earningsReason ? median(recent.map((q) => (q.pretaxIncome - q.tax - q.netIncome) / q.revenue)) : null;
   const scenarios = {};
   for (const [name, sign] of [['low', -1], ['base', 0], ['high', 1]]) {
-    const g = clamp(growth + sign * spread, -0.5, 1);
+    const g = clamp(growth * 0.5 + sign * spread, -0.5, 1);
     let rows = recent.map((q, i) => ({ start: i ? addDays(advanceEnd(recent[i - 1].end), 1) : period.start,
       end: advanceEnd(q.end), revenue: q.revenue * (1 + g) }));
     if (guided) {
@@ -87,7 +88,7 @@ export function forecastFundamentals({ quarters, asOf, currency, eligibility = {
     scenarios[name] = { revenue: sum(rows.map((q) => q.revenue)), eps: eps > 0 ? eps : null, quarters: rows };
   }
   return { ...base, status: 'estimated', period, scenarios, earningsReason, guidanceReason,
-    assumptions: { revenueGrowth: growth, revenueGrowthSpread: spread, operatingMargin, nonoperatingMargin,
+    assumptions: { historicalRevenueGrowth: growth, revenueGrowth: growth * 0.5, growthDamping: 0.5, revenueGrowthSpread: spread, operatingMargin, nonoperatingMargin,
       taxRate, dilutedShareGrowth: shareGrowth, commonDrag, guidance: guided ? guidance : null },
     baselines: { revenue: revenueTTM, eps: !earningsReason ? sum(recent.map((q) => q.netIncome / q.dilutedShares)) : null },
     inputs: qs, warnings: ['Sensitivity scenarios are not calibrated confidence intervals.',

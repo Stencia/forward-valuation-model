@@ -17,13 +17,13 @@ function input() {
 test('revenue seasonality, operating bridge, dilution and price math', () => {
   const f = forecastFundamentals(input());
   assert.equal(f.status, 'estimated');
-  assert.ok(Math.abs(f.scenarios.base.revenue - 605) < 1e-9);
-  assert.ok(Math.abs(f.scenarios.base.eps - 11.616) < 1e-9);
+  assert.ok(Math.abs(f.scenarios.base.revenue - 577.5) < 1e-9);
+  assert.ok(Math.abs(f.scenarios.base.eps - 11.088) < 1e-9);
   assert.ok(f.scenarios.low.eps < f.scenarios.base.eps && f.scenarios.base.eps < f.scenarios.high.eps);
   assert.equal(f.period.start, '2025-01-01');
   const p = priceForwardForecast(f, { price: 100, marketCap: 1000, date: '2025-01-31', currency: 'USD', shareBasis: 'common', source: 'Twelve Data' });
   assert.equal(p.scenarios.base.forwardPE, 100 / f.scenarios.base.eps);
-  assert.ok(Math.abs(p.scenarios.base.forwardPS - 1000 / 605) < 1e-12);
+  assert.ok(Math.abs(p.scenarios.base.forwardPS - 1000 / 577.5) < 1e-12);
 });
 test('withhold unsafe inputs without treating missing values as zero', () => {
   for (const mutate of [x => x.quarters.pop(), x => x.quarters[6].start = '2024-08-01',
@@ -110,4 +110,62 @@ test('calendar boundaries advance across leap years without drifting guidance', 
   assert.equal(f.period.datesEstimated, false);
   assert.deepEqual(f.scenarios.base.quarters.map(q => q.end), ['2025-03-31', '2025-06-30', '2025-09-30', '2025-12-31']);
   assert.deepEqual(f.scenarios.base.quarters.map(q => q.start), ['2025-01-01', '2025-04-01', '2025-07-01', '2025-10-01']);
+});
+
+
+test('growth dampens expansions and contractions without changing eligibility thresholds', () => {
+  const x = input();
+  const f = forecastFundamentals(x);
+  assert.ok(Math.abs(f.assumptions.historicalRevenueGrowth - .1) < 1e-12);
+  assert.ok(Math.abs(f.assumptions.revenueGrowth - .05) < 1e-12);
+  assert.equal(f.assumptions.growthDamping, .5);
+  for (const q of x.quarters.slice(-4)) q.revenue *= .8 / 1.1;
+  const down = forecastFundamentals(x);
+  assert.ok(Math.abs(down.assumptions.revenueGrowth + .1) < 1e-12);
+  const extreme = input(); extreme.quarters.at(-1).revenue *= 3;
+  assert.equal(forecastFundamentals(extreme).reason, 'revenue-regime-change');
+});
+
+test('negative derived revenue is withheld with its original evidence', () => {
+  const raw = rawFacts();
+  const points = raw.facts['us-gaap'].Revenues.units.USD;
+  points.pop();
+  points.push({ start: '2024-01-01', end: '2024-09-30', filed: '2024-10-25', val: 500, form: '10-Q', accn: 'nine-month' },
+    { start: '2024-01-01', end: '2024-12-31', filed: '2025-01-25', val: 450, form: '10-K', accn: 'annual' });
+  const x = companyFactsModelInput(raw, '2025-02-01');
+  assert.equal(x.quarters.at(-1).revenue, null);
+  assert.equal(x.quarters.at(-1).revenueBasisIssue, true);
+  assert.ok(x.quarters.at(-1).sources.some(s => s.accession === 'annual' && s.value === 450));
+  assert.equal(forecastFundamentals(x).reason, 'inconsistent-revenue-basis');
+});
+
+test('loss outcomes remain in scaled earnings errors and exclusion counts reconcile', () => {
+  const raw = rawFacts();
+  for (const [tag, concept] of Object.entries(raw.facts['us-gaap'])) {
+    for (const points of Object.values(concept.units)) {
+      for (const p of [...points].slice(0, 4)) points.push({ ...p,
+        start: p.start.replace('2023', '2025'), end: p.end.replace('2023', '2025'),
+        filed: date(Number(p.filed.slice(0, 4)) + 2, Number(p.filed.slice(5, 7)) - 1, 25),
+        val: tag === 'NetIncomeLoss' ? -10 : p.val });
+    }
+  }
+  const result = backtestCompany(raw, '2026-02-01');
+  assert.ok(result.folds.some(f => f.earnings.actual === -40));
+  assert.ok(result.summary.earnings.includingLosses.nonpositiveOutcomes > 0);
+  assert.ok(result.summary.earnings.includingLosses.observations > result.summary.earnings.observations);
+  assert.ok(result.summary.earnings.includingLosses.meanAbsoluteErrorAsShareOfTrailingRevenue > 0);
+  assert.equal(result.audit.cutoffs, Object.values(result.audit.withheld).reduce((a,b) => a+b, 0)
+    + result.audit.duplicateHorizons + result.audit.incompleteOutcomes + result.folds.length);
+  for (const p of raw.facts['us-gaap'].NetIncomeLoss.units.USD)
+    if (p.start.startsWith('2025')) p.val = 0;
+  const zero = backtestCompany(raw, '2026-02-01');
+  const zeroFold = zero.folds.find(f => f.earnings.actual === 0);
+  assert.ok(zeroFold);
+  assert.equal(zeroFold.earnings.error, null);
+  assert.equal(zeroFold.earnings.errorAsShareOfTrailingRevenue,
+    Math.abs(zeroFold.earnings.predicted) / zeroFold.revenue.baseline);
+  assert.equal(zeroFold.earnings.baselineErrorAsShareOfTrailingRevenue,
+    Math.abs(zeroFold.earnings.baseline) / zeroFold.revenue.baseline);
+  const unsupported = backtestCompany({ ...raw, sic: '6021' }, '2026-02-01');
+  assert.equal(unsupported.audit.withheld['unsupported-basis'], unsupported.audit.cutoffs);
 });

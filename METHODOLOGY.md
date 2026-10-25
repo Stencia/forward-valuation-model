@@ -6,9 +6,8 @@
 live in `scripts/forward-valuation-inputs.mjs` and `scripts/evaluate-forward-valuation.mjs`.
 
 The input is eight contiguous quarters, with start/end dates, publication dates, currency and
-source evidence. Revenue is projected by multiplying each of the latest four quarters by the
-median of their year-over-year growth rates. This preserves seasonality. Low/high growth moves
-by the larger of five percentage points and 1.4826 times the median absolute deviation of growth.
+source evidence. Revenue is projected as `prior-year quarter revenue × (1 + 0.5 × median year-over-year growth)` for each of the latest four quarters (version 2). This halves both growth and contraction extrapolation while preserving seasonality. The 50% damping is a fixed conservative assumption, not fitted to published multiples. Low/high growth moves
+around that dampened base by the larger of five percentage points and 1.4826 times the median absolute deviation of growth.
 These are sensitivity scenarios, not statistical confidence intervals.
 
 For positive-earnings companies, quarterly operating margin is the average of the corresponding
@@ -92,3 +91,21 @@ errors require positive realized net income; negative outcomes and withheld fore
 contribute to the percentage-error score. Current restatements supply realized outcomes, while
 historical publication cutoffs govern training. This is a filing-date reconstruction, not an
 original-ingestion replay. Windows overlap and the selected sample has survivorship bias.
+
+## Version 2 evaluation
+
+The historical evaluator now reports the reason/count for every withheld cutoff, duplicate horizon and incomplete realized window. For realized windows it separately reports withheld earnings forecasts and missing earnings outcomes. These counts describe cutoff attempts, not unique companies or independent observations.
+
+MAPE remains restricted to positive realized outcomes. A second earnings score is absolute net-income error divided by the trailing-year revenue known at prediction time. It includes zero and negative realized net income, uses the same denominator for model and baseline, and is reported separately from MAPE. Forecasts withheld before the outcome are counted rather than assigned an invented prediction. Revenue has its own positive-outcome eligibility.
+
+A negative quarter reconstructed by subtracting cumulative revenue is withheld as `inconsistent-revenue-basis`; source evidence remains available. This does not fill missing quarters or claim to repair restatements. Directly filed negative revenue still fails the existing positive-revenue guard. Financial SIC exclusions and extreme-growth guards remain unchanged pending verified alternatives.
+
+The offline `scripts/compare-history.mjs` compares this checkout with a frozen baseline checkout. Supply a JSON manifest of `{ "symbol": "EXAMPLE", "cik": "0000000001" }` rows and raw SEC snapshots named by ten-digit CIK. It deduplicates issuers, excludes all share classes of prior development firms, then sorts by SHA-256 of `forward-v2-validation:` plus padded CIK. The first 30 issuers are development and the next 30 are holdout; choose the split before inspecting outcomes. It reports paired errors for identical cutoffs, horizons, realized outcomes and baselines, both pooled and with equal company weights.
+
+```sh
+node scripts/compare-history.mjs --manifest /path/to/manifest.json \
+  --input-dir /path/to/snapshots --baseline-root /path/to/v1-checkout \
+  --split holdout --as-of 2026-10-25 --out artifacts/holdout.json
+```
+
+This is an issuer holdout within today's surviving universe, not a survivorship-free or prospective experiment. Overlapping forecast windows are correlated. Missing raw snapshots cause a failure rather than silently removing a selected company. See [VALIDATION.md](VALIDATION.md) for the recorded selection, prior-development exclusions, versions and results.
