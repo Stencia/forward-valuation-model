@@ -4,6 +4,16 @@ Utensil Desk's deterministic research model for forward price/earnings (P/E) and
 
 This is the calculation engine used for our initial forward-valuation comparisons. It is ordinary JavaScript, with no trained AI weights, runtime dependencies, network requests or provider credentials. The calculation and SEC adapter are extracted unchanged from our application. See [METHODOLOGY.md](METHODOLOGY.md) for the assumptions, accounting safeguards and offline evaluation commands.
 
+## Comparison previews
+
+Snapshot retrieved October 25, 2026, using October 23 closing prices and model inputs available by October 25. Published multiples come from [Stock Analysis](https://stockanalysis.com/list/sp-500-stocks/), using each company's statistics page. These are dated research comparisons, not live quotes.
+
+![Forward P/E comparison: 146 paired estimates among 503 S&P 500 tickers, with published P/E on the horizontal axis and model P/E on the vertical axis. Both axes are logarithmic.](docs/images/forward-pe-2026-10-25.png)
+
+![Forward P/S comparison for NBIS, CRWV, IREN, APLD, CORZ, WULF, HUT and PLTR. All eight published multiples are shown; the model provides PLTR only, with seven estimates withheld.](docs/images/forward-ps-2026-10-25.png)
+
+The P/E comparison uses the same published closing price for both multiples. P/S uses published rounded equity market capitalization. The model forecasts the next four unreported fiscal quarters; published forward horizons and adjusted/GAAP bases have not been reconciled. Differences are contextual, not forecast-accuracy scores. Withheld estimates are not zero. See [the methodology](METHODOLOGY.md) for eligibility safeguards.
+
 ## Development and model attribution
 
 The initial implementation was developed with **OpenAI GPT-6 through Codex**, at Stencia's direction. This identifies the model family reported in the development session; the exact variant and checkpoint were not independently verified or recorded. It should not be read as a more precise model identifier.
@@ -53,7 +63,7 @@ Check `status` before reading results. A forecast can retain revenue while withh
 - Agreement with published multiples is not evidence of forecast accuracy. Accounting basis and forecast horizon can differ. Historical evaluation uses current restatements as realized outcomes and overlapping windows; see the methodology.
 - This initial research release is not a validated production forecasting service, fair-value estimate, price target or trading signal.
 
-The release contains source code, documentation and synthetic tests only. Obtain your own input data and respect its provider terms. No vendor data redistribution rights are granted by the code license. The package is marked private solely to prevent accidental npm publication; the GitHub source is public and MIT licensed.
+The release contains source code, documentation, synthetic tests and dated comparison images. It does not include the downloaded input or comparison datasets. Obtain your own input data and respect its provider terms. No vendor data redistribution rights are granted by the code license. The package is marked private solely to prevent accidental npm publication; the GitHub source is public and MIT licensed.
 
 ## Contributing
 
