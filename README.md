@@ -2,7 +2,9 @@
 
 A deterministic research model developed for [Utensil Desk](https://utensildesk.com), estimating forward price/earnings (P/E) and price/sales (P/S). Released by Stencia under the MIT license.
 
-This is the calculation engine used for our initial forward-valuation comparisons. It is ordinary JavaScript, with no trained AI weights, runtime dependencies, network requests or provider credentials. The calculation and SEC adapter are extracted unchanged from our application. See [METHODOLOGY.md](METHODOLOGY.md) for the assumptions, accounting safeguards and offline evaluation commands.
+This repository maintains the calculation engine introduced in our forward-valuation research comparisons. It is ordinary JavaScript, with no trained AI weights, runtime dependencies, network requests or provider credentials. The initial release was extracted unchanged from our application; subsequent research improvements are versioned here. See [METHODOLOGY.md](METHODOLOGY.md) for the assumptions, accounting safeguards and offline evaluation commands.
+
+Current research version: **`forward-fundamentals-2`**. It dampens extrapolated revenue growth by 50%, distinguishes inconsistent revenue reconstruction from reported sales, and includes loss outcomes in historical earnings scoring. See [the version 2 evaluation](VALIDATION.md).
 
 ## Use by Utensil Desk
 
@@ -14,7 +16,7 @@ Before general release, we need broader independent historical validation, relia
 
 ## Comparison previews
 
-Snapshot retrieved October 25, 2026, using October 23 closing prices and model inputs available by October 25. Published multiples come from [Stock Analysis](https://stockanalysis.com/list/sp-500-stocks/), using each company's statistics page. These are dated research comparisons, not live quotes.
+These previews show the original `forward-fundamentals-1` model, not version 2. Snapshot retrieved October 25, 2026, using October 23 closing prices and model inputs available by October 25. Published multiples come from [Stock Analysis](https://stockanalysis.com/list/sp-500-stocks/), using each company's statistics page. These are dated research comparisons, not live quotes.
 
 ![Forward P/E comparison: 146 paired estimates among 503 S&P 500 tickers, with published P/E on the horizontal axis and model P/E on the vertical axis. Both axes are logarithmic.](docs/images/forward-pe-2026-10-25.png)
 
@@ -43,7 +45,7 @@ npm test
 npm run example
 ```
 
-The example uses entirely synthetic quarterly statements and a synthetic quote. It prints a base forward P/E of approximately 8.61 and forward P/S of 1.65.
+The example uses entirely synthetic quarterly statements and a synthetic quote. It prints a base forward P/E of approximately 9.02 and forward P/S of 1.73.
 
 ## Use
 
@@ -69,7 +71,7 @@ Check `status` before reading results. A forecast can retain revenue while withh
 - Includes a US GAAP/USD SEC Company Facts adapter and an offline historical evaluator. The adapter excludes financial SIC codes 6000 through 6799; this broad filter can also exclude firms outside conventional finance.
 - Withholds forecasts for unsupported or inadequate inputs, extreme historical growth and other accounting safeguards. Coverage is intentionally incomplete, particularly for rapidly changing companies.
 - Agreement with published multiples is not evidence of forecast accuracy. Accounting basis and forecast horizon can differ. Historical evaluation uses current restatements as realized outcomes and overlapping windows; see the methodology.
-- This initial research release is not a validated production forecasting service, fair-value estimate, price target or trading signal.
+- This research release is not a validated production forecasting service, fair-value estimate, price target or trading signal.
 
 The release contains source code, documentation, synthetic tests and dated comparison images. It does not include the downloaded input or comparison datasets. Obtain your own input data and respect its provider terms. No vendor data redistribution rights are granted by the code license. The package is marked private solely to prevent accidental npm publication; the GitHub source is public and MIT licensed.
 

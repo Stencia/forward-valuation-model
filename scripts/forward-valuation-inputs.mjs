@@ -48,7 +48,11 @@ export function companyFactsModelInput(raw, asOf) {
   const revenues = resolve(revenueTags);
   const quarters = revenues.map((r) => {
     const sources = [...origins(r)];
-    const row = { start: r.start, end: r.end, currency: 'USD', revenue: r.val };
+    // A negative reconstructed revenue is evidence of incompatible cumulative inputs,
+    // not reported negative sales. Preserve the source evidence but withhold the value.
+    const revenueBasisIssue = Boolean(r.derived && r.val < 0);
+    const row = { start: r.start, end: r.end, currency: 'USD',
+      revenue: revenueBasisIssue ? null : r.val, ...(revenueBasisIssue ? { revenueBasisIssue: true } : {}) };
     for (const [key, points] of Object.entries(series)) {
       const p = points.find((p) => p.start === r.start && p.end === r.end);
       row[key] = p?.val ?? null;

@@ -2,7 +2,7 @@
 
 Initial extraction: 2026-10-25. Model version: `forward-fundamentals-1`.
 
-The following implementation and test files are copied byte for byte from the application source used for the initial comparisons. SHA-256 hashes let readers identify this exact baseline. Subsequent improvements will be versioned in this repository. No application Git history is included.
+At initial commit `cfcca47ad619b37e10841a6c2d2c5e6aeeff57af`, the following implementation and test files were copied byte for byte from the application source used for the initial comparisons. SHA-256 hashes let readers identify this exact baseline. These hashes identify that original baseline, not the current files. Subsequent improvements are versioned in this repository. Version 2 changes forecasting and evaluation as documented in METHODOLOGY.md and VALIDATION.md. No application Git history is included.
 
 - `docs/core/forward-valuation-model.js`: `22db868504869c74faee7193a1fe2db0bf6679a15078838f660285b55191ca96`
 - `scripts/forward-valuation-inputs.mjs`: `218fbe6374153b98dcfb0c981546ea3a5862aa08d65660dfd6a73b2d154961ef`
