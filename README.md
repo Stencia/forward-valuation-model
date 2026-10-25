@@ -4,6 +4,16 @@ Utensil Desk's deterministic research model for forward price/earnings (P/E) and
 
 This is the calculation engine used for our initial forward-valuation comparisons. It is ordinary JavaScript, with no trained AI weights, runtime dependencies, network requests or provider credentials. The calculation and SEC adapter are extracted unchanged from our application. See [METHODOLOGY.md](METHODOLOGY.md) for the assumptions, accounting safeguards and offline evaluation commands.
 
+## Development and model attribution
+
+The initial implementation was developed with **OpenAI GPT-6 through Codex**, at Stencia's direction. This identifies the model family reported in the development session; the exact variant and checkpoint were not independently verified or recorded. It should not be read as a more precise model identifier.
+
+The LLM helped write the implementation, documentation and tests. It is not part of the valuation engine at runtime: running this package does not call an LLM, load trained weights or require an OpenAI account.
+
+The financial methods are conventional: forecast revenue growth, operating margins, taxes and diluted shares, then calculate P/E and P/S from the resulting earnings and revenue. We did not invent these techniques. Our contribution is their implementation and combination, including the specific assumptions, input handling and safeguards documented here. No existing valuation-model package or pretrained valuation weights were imported into this implementation.
+
+The LLM's training informed its output, but we cannot identify which specific training sources influenced this code or these formulas. We have not established that every formula or code pattern is novel or unique. “Our model” means the implementation we maintain, not a claim that its underlying methods were invented independently of prior work. Open-sourcing it makes those choices inspectable and reproducible; it does not establish originality or forecasting accuracy.
+
 ## Run
 
 Node.js 22 or newer is required. No dependency installation is needed.
