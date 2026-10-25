@@ -6,8 +6,7 @@
 live in `scripts/forward-valuation-inputs.mjs` and `scripts/evaluate-forward-valuation.mjs`.
 
 The input is eight contiguous quarters, with start/end dates, publication dates, currency and
-source evidence. Revenue is projected by multiplying each of the latest four quarters by the
-median of their year-over-year growth rates multiplied by 0.5 (version 2). This halves both growth and contraction extrapolation while preserving seasonality. The 50% damping is a fixed conservative assumption, not fitted to published multiples. Low/high growth moves
+source evidence. Revenue is projected as `prior-year quarter revenue × (1 + 0.5 × median year-over-year growth)` for each of the latest four quarters (version 2). This halves both growth and contraction extrapolation while preserving seasonality. The 50% damping is a fixed conservative assumption, not fitted to published multiples. Low/high growth moves
 around that dampened base by the larger of five percentage points and 1.4826 times the median absolute deviation of growth.
 These are sensitivity scenarios, not statistical confidence intervals.
 

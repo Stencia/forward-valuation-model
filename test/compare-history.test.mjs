@@ -21,6 +21,8 @@ test('paired comparisons retain losses and reject differing outcomes or horizons
   assert.equal(report.earnings.nonpositiveOutcomes,1);
   assert.deepEqual(report.earnings.pooled,{before:.4,after:.2,baseline:.3});
   assert.equal(pairedSummary([{symbol:'TEST',before:{folds:[f(30)]},after:{folds:[f(10,-20)]}}]).earnings.pairedFolds,0);
+  const differentScale=f(10);differentScale.revenue.baseline=200;
+  assert.equal(pairedSummary([{symbol:'TEST',before:{folds:[f(30)]},after:{folds:[differentScale]}}]).earnings.pairedFolds,0);
   const later=f(10);later.period.end='2021-01-01';
   assert.equal(pairedSummary([{symbol:'TEST',before:{folds:[f(30)]},after:{folds:[later]}}]).earnings.pairedFolds,0);
 });

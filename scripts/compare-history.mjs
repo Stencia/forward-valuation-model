@@ -35,7 +35,8 @@ export function pairedSummary(results) {
           || left.actual !== right.actual || left.baseline !== right.baseline) return [];
         // Scales earnings errors by historical revenue so zero/loss outcomes stay in the sample.
         const scale = metric === 'earnings' ? a.revenue.baseline : left.actual;
-        if (!(scale > 0)) return [];
+        if (!(scale > 0) || !Number.isFinite(scale)
+          || (metric === 'earnings' && scale !== b.revenue.baseline)) return [];
         return [{ before: Math.abs(left.predicted-left.actual)/scale,
           after: Math.abs(right.predicted-right.actual)/scale,
           baseline: Math.abs(left.baseline-left.actual)/scale, nonpositive: left.actual <= 0 }];

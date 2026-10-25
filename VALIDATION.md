@@ -41,6 +41,8 @@ Windows overlap and are not independent. The sample contains today's surviving i
 
 ## Coverage and audit
 
+A repeat of the 503-ticker current snapshot leaves coverage unchanged: 146 P/E estimates and 332 revenue estimates. Only PLTR has a P/S model estimate in the eight-company neocloud/PLTR comparison. The original README graphs remain explicitly labeled version 1; they are not charts of version 2.
+
 The new evaluator counts withheld cutoffs, duplicate horizons and incomplete realized windows. It also counts missing earnings outcomes and earnings withheld within realized windows. Reasons are not relaxed to inflate coverage. Financial SIC classification, foreign-issuer quarterly coverage, APLD's incompatible cumulative revenue bases and rapid business transitions remain unresolved.
 
 | Holdout company | Revenue windows v1 / v2 | Positive-earnings windows v1 / v2 | V2 earnings windows including losses |
