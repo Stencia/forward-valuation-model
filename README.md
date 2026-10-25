@@ -1,8 +1,16 @@
 # Forward valuation model
 
-Utensil Desk's deterministic research model for forward price/earnings (P/E) and price/sales (P/S), released by Stencia under the MIT license.
+A deterministic research model developed for [Utensil Desk](https://utensildesk.com), estimating forward price/earnings (P/E) and price/sales (P/S). Released by Stencia under the MIT license.
 
 This is the calculation engine used for our initial forward-valuation comparisons. It is ordinary JavaScript, with no trained AI weights, runtime dependencies, network requests or provider credentials. The calculation and SEC adapter are extracted unchanged from our application. See [METHODOLOGY.md](METHODOLOGY.md) for the assumptions, accounting safeguards and offline evaluation commands.
+
+## Use by Utensil Desk
+
+As of October 25, 2026, this model is used for Utensil Desk's research comparisons. It does **not** power the live site's reader-facing forward valuation figures. Publishing the source and comparison graphs is not a production rollout.
+
+The initial historical evaluation did not show consistent earnings-forecast improvement over repeating the latest four reported quarters. The broader current comparison produced P/E estimates for 146 of 503 S&P 500 tickers, and P/S for one of the eight neocloud/PLTR comparison companies. These coverage counts do not measure predictive accuracy.
+
+Before general release, we need broader independent historical validation, reliable reporting-period and share-basis handling, and verified treatment of unsupported businesses and rapid business transitions. Any future integration should identify these as Utensil Desk model estimates, expose their forecast period and source methodology, and preserve withholding when inputs are inadequate. This section will be updated when production use is verified.
 
 ## Comparison previews
 
