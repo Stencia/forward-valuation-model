@@ -16,8 +16,11 @@ const METRICS = {
 // Only these are excluded; the rest of Division H (60-67) faces the same per-company guards as any
 // other filer. Finance services (6199: card networks, payment and crypto-mining/compute firms),
 // exchanges and market services (6200), investment advice (6282), insurance agents and brokers
-// (6411), real-estate agents, managers, dealers and developers (6520-6599) and royalty or patent
-// owners (6792-6795) report fee, sales or royalty revenue with ordinary operating expenses.
+// (6411), general real estate (6500, mostly services firms), real-estate agents, managers, dealers
+// and developers (6520-6599) and royalty or patent owners (6792-6795) report fee, sales or royalty
+// revenue with ordinary operating expenses. Some investment advisers consolidate an insurer; their
+// reported revenue then includes premiums and investment income, the top line published P/S also
+// uses, and their earnings meet the same per-company guards.
 // The issue the ranges answer is whether the business has a revenue line and operating margin
 // in the model's sense, never which companies are in them.
 export const UNSUPPORTED_SIC_RANGES = Object.freeze([
@@ -30,9 +33,9 @@ export const UNSUPPORTED_SIC_RANGES = Object.freeze([
   [6211, 6221],
   // Insurance carriers: premiums earned against reserve changes, with investment income in earnings.
   [6300, 6399],
-  // Property operators and lessors, which include REITs filed under these codes: GAAP earnings move
+  // Property operators and lessors (not 6500, general real estate), which include REITs filed under these codes: GAAP earnings move
   // with depreciation and property-sale gains, and the business is valued on FFO, not computed here.
-  [6500, 6519],
+  [6510, 6519],
   // Holding and investment offices, blank-check companies: no operating business of their own.
   [6700, 6791],
   // Real estate investment trusts (see 6500-6519) and investors not elsewhere classified, whose
@@ -86,8 +89,25 @@ function sharesFor(facts, q) {
 // the window has a gap). This line takes, for every reported period, the latest filed figure from
 // the whole-revenue candidates (a partial one only for a period no whole candidate reports) and
 // differences that one line, so the annual and its year-to-date both carry the current basis.
+// A difference across tags stands only when every figure in it closes its own filing's income
+// statement (closesIncomeStatement).
 const FLOW_FORMS = /^(10-Q|10-K|20-F|40-F)(\/A)?$/;
 const IDENTITY_TOLERANCE = 0.001;
+const COST_OF_REVENUE = ['CostOfRevenue', 'CostOfGoodsAndServicesSold', 'CostOfServices', 'CostOfGoodsSold'];
+const TOTAL_COSTS = ['CostsAndExpenses', 'OperatingCostsAndExpenses', 'BenefitsLossesAndExpenses', 'OperatingExpenses'];
+// A revenue figure is the filer's whole top line for its period when the same filing's income
+// statement starts from it: less cost of revenue it gives the filed gross profit, or less total
+// costs the filed operating income. Contract revenue that leaves out rent or interest does not
+// close either, even in a filing where it once equalled the total (a lessor before its first lease).
+function closesIncomeStatement(facts, o) {
+  const at = (tag) => (facts['us-gaap']?.[tag]?.units?.USD || [])
+    .find((p) => p.accn === o.accession && p.start === o.start && p.end === o.end && Number.isFinite(p.val))?.val ?? null;
+  const near = (v, target) => target != null && Math.abs(v - target) <= Math.abs(target) * IDENTITY_TOLERANCE;
+  const gross = at('GrossProfit');
+  if (gross != null && COST_OF_REVENUE.some((tag) => { const c = at(tag); return c != null && near(o.value - c, gross); })) return true;
+  const operating = at('OperatingIncomeLoss');
+  return operating != null && TOTAL_COSTS.some((tag) => { const c = at(tag); return c != null && near(o.value - c, operating); });
+}
 function reconciledRevenueQuarters(facts, candidates) {
   const chosen = new Map();
   const conceptOf = new Map();
@@ -104,17 +124,6 @@ function reconciledRevenueQuarters(facts, candidates) {
     const prior = chosen.get(key);
     if (!prior || better(rank(c, p), prior.rank)) chosen.set(key, { rank: rank(c, p), point: p, concept: c });
   }
-  // Two concepts are one basis only where the filer itself shows it: the same period, in the same
-  // filing, at the same value. Contract revenue beside a larger total in every shared filing
-  // (a lessor's rent outside contracts) never qualifies, so its figures are never differenced
-  // against the total's.
-  const sameBasis = new Set();
-  for (const a of byConcept) for (const b of byConcept) {
-    if (a === b) continue;
-    const index = new Map(b.points.map((p) => [`${p.accn}|${p.start}|${p.end}`, p.val]));
-    if (a.points.some((p) => { const v = index.get(`${p.accn}|${p.start}|${p.end}`);
-      return v != null && Math.abs(p.val - v) <= Math.abs(v) * IDENTITY_TOLERANCE; })) sameBasis.add(`${a.tag}|${b.tag}`);
-  }
   const pointKey = (p) => `${p.accn || null}|${p.filed || null}|${p.start}|${p.end}|${p.val}`;
   const points = [...chosen.values()].map(({ point, concept }) => {
     conceptOf.set(pointKey(point), concept);
@@ -130,8 +139,9 @@ function reconciledRevenueQuarters(facts, candidates) {
     if (!q.derived) return [];
     const terms = q.origin.terms.map((t) => ({ origin: relabel(t.origin), coefficient: t.coefficient }));
     if (terms.some((t) => !t.origin)) return [];
-    const tags = [...new Set(terms.map((t) => t.origin.concept))];
-    if (tags.some((a) => tags.some((b) => a !== b && !sameBasis.has(`${a}|${b}`)))) return [];
+    // Differencing across tags needs each figure to be the whole top line of its own filing.
+    if (new Set(terms.map((t) => t.origin.concept)).size > 1
+      && !terms.every((t) => closesIncomeStatement(facts, t.origin))) return [];
     return [{ ...q, origin: Object.freeze({ kind: 'derived', method: q.origin.method, terms: Object.freeze(terms) }),
       reconciled: true }];
   });
@@ -164,7 +174,8 @@ export function companyFactsModelInput(raw, asOf) {
     // not reported negative sales. Preserve the source evidence but withhold the value.
     const revenueBasisIssue = Boolean(r.derived && r.val < 0);
     const row = { start: r.start, end: r.end, currency: 'USD',
-      revenue: revenueBasisIssue ? null : r.val, ...(revenueBasisIssue ? { revenueBasisIssue: true } : {}) };
+      revenue: revenueBasisIssue ? null : r.val, ...(revenueBasisIssue ? { revenueBasisIssue: true } : {}),
+      ...(r.reconciled ? { revenueReconciled: true } : {}) };
     for (const [key, points] of Object.entries(series)) {
       const p = points.find((p) => p.start === r.start && p.end === r.end);
       row[key] = p?.val ?? null;

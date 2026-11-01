@@ -6,9 +6,9 @@ Evaluation date: November 1, 2026. Baseline: `forward-fundamentals-2`, commit `8
 
 Changes, all rules over filed data with no company lists:
 
-- The financial exclusion covers banks, non-bank lenders, broker-dealers, insurance carriers, property lessors and REITs, investment offices and blank checks, instead of all of SIC 6000-6799. Finance services (6199), exchanges (6200), investment advice (6282), insurance brokers (6411), real-estate services and royalty owners are modeled like other filers.
+- The financial exclusion covers banks, non-bank lenders, broker-dealers, insurance carriers (managed care included), property lessors and REITs, investment offices and blank checks, instead of all of SIC 6000-6799. Finance services (6199), exchanges (6200), investment advice (6282), insurance brokers (6411), general real estate (6500), real-estate services and royalty owners are modeled like other filers.
 - A filer whose top line is `RevenuesNetOfInterestExpense` is excluded whatever its SIC. Without this, American Express and Ameriprise would have entered with a partial revenue line.
-- Revenue re-filed under a different tag is differenced as one line when the filer shows both tags at one value in one filing. Applied Digital's fiscal 2025 and 2026 fourth quarters now resolve to 51.1M and 258.7M; its fiscal 2026 fourth-quarter earnings release states 258.7M and 407% growth on the prior-year quarter (51.0M). The previous adapter derived -33.3M and left the 2026 quarter out.
+- Revenue re-filed under a different tag is differenced as one line when every figure differenced closes its own filing's income statement. Applied Digital's fiscal 2025 and 2026 fourth quarters now resolve to 51.1M and 258.7M; its fiscal 2026 fourth-quarter earnings release states 258.7M and 407% growth on the prior-year quarter (51.0M). The previous adapter derived -33.3M and left the 2026 quarter out.
 - P/E is withheld when diluted shares move more than 25% between adjacent quarters. Booking Holdings and Texas Pacific Land have splits restated in some periods only, so every year-over-year comparison looked flat while quarterly EPS mixed share bases.
 
 ### Coverage, 503-ticker universe
@@ -17,12 +17,12 @@ The universe is the 503 S&P 500 tickers in the application's SPY-derived index f
 
 | | Version 2 | Version 3 |
 | --- | ---: | ---: |
-| Revenue estimates | 358 | 377 |
-| P/E estimates | 164 | 168 |
-| Withheld as unsupported basis | 98 | 78 |
+| Revenue estimates | 358 | 378 |
+| P/E estimates | 164 | 169 |
+| Withheld as unsupported basis | 98 | 77 |
 | Withheld P/E, share-basis discontinuity | 2 | 4 |
 
-Newly estimated: CBOE, ICE, MRSH, NDAQ and WTW with P/E; AJG, AON, APO, ARES, BEN, BRO, BX, CME, COIN, ERIE, IVZ, KKR, TPL and TROW with revenue only. BKNG loses its P/E (share basis above). SYF enters eligibility but has no revenue line in the candidates and stays withheld (insufficient history).
+Newly estimated: CBOE, CBRE, ICE, MRSH, NDAQ and WTW with P/E; AJG, AON, APO, ARES, BEN, BRO, BX, CME, COIN, ERIE, IVZ, KKR, TPL and TROW with revenue only. BKNG loses its P/E (share basis above). SYF enters eligibility but has no revenue line in the candidates and stays withheld (insufficient history). APO and KKR consolidate insurers (premiums are 8% and 17% of 2025 revenue), so their revenue includes premiums and investment income; it is their reported top line, the one published P/S uses, and their P/E stays withheld. No premium-share threshold separates them from CVS (34%).
 
 | Ticker | SIC | Version 2 | Version 3 |
 | --- | ---: | --- | --- |
@@ -51,7 +51,7 @@ Same method as version 2: errors relative to realized revenue, and net-income er
 | development | earnings | 2 | 13 | 167 | 4.22% | 4.39% | 6.52% | 6.52% |
 | development | earnings | 3 | 15 | 201 | 4.07% | 4.11% | 6.40% | 6.20% |
 
-On the holdout, version 3 keeps its margin over the baseline on both weightings. The holdout's only changed company is FISV, which gains three realized windows from the revenue reconciliation; on the 657 revenue and 262 earnings windows both versions score, their errors are identical. Development gains TPL, BX and MRSH from the narrower exclusion. With each company weighted equally, development revenue and earnings now trail the baseline: the newly admitted firms' growth and margins are harder for the mechanical model than the average. That is a reason to keep the model in research, not to re-exclude them.
+On the holdout, version 3 keeps its margin over the baseline on both weightings. FISV gains three realized windows from the revenue reconciliation. TSCO and MKC each lose three earnings windows to the adjacent-quarter share check in the year after a split. On the 657 revenue and 262 earnings windows both versions score, their errors are identical. Development gains TPL, BX and MRSH from the narrower exclusion. With each company weighted equally, development revenue and earnings now trail the baseline: the newly admitted firms' growth and margins are harder for the mechanical model than the average. That is a reason to keep the model in research, not to re-exclude them.
 
 Re-running the hash split on the current universe moves CPAY and SNPS into development and adds BG and BR to the holdout. On that split the holdout also keeps its margin: revenue 10.47% against 11.80% (version 2: 10.51% against 11.82%), earnings 3.62% against 3.72% (3.60% against 3.70%).
 

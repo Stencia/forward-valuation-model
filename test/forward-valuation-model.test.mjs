@@ -173,10 +173,10 @@ test('loss outcomes remain in scaled earnings errors and exclusion counts reconc
 test('financial exclusion covers lenders, dealers, insurers and property lessors, not fee businesses', () => {
   // Banks, card lenders, broker-dealers, insurers (managed care included), REITs, blank checks.
   for (const sic of [6021, 6022, 6035, 6141, 6153, 6162, 6172, 6189, 6211, 6221, 6311, 6324, 6331, 6399,
-    6500, 6510, 6512, 6513, 6770, 6798, 6799, 99, NaN]) assert.equal(unsupportedSic(sic), true, String(sic));
+    6510, 6512, 6513, 6770, 6798, 6799, 99, NaN]) assert.equal(unsupportedSic(sic), true, String(sic));
   // Finance services (crypto-mining and compute hosts, card networks), exchanges, asset managers,
   // insurance brokers, real-estate services and royalty owners keep the ordinary guards.
-  for (const sic of [6199, 6200, 6282, 6411, 6531, 6552, 6792, 6794, 6795, 3571, 7374])
+  for (const sic of [6199, 6200, 6282, 6411, 6500, 6531, 6552, 6792, 6794, 6795, 3571, 7374])
     assert.equal(unsupportedSic(sic), false, String(sic));
   const raw = rawFacts();
   assert.equal(companyFactsModelInput({ ...raw, sic: '6199' }, '2025-02-01').eligibility.unsupportedBusiness, false);
@@ -190,17 +190,24 @@ test('financial exclusion covers lenders, dealers, insurers and property lessors
 });
 
 // Quarters tagged as contract revenue, the year re-filed under Revenues: the shape of a 10-K
-// restated for a disposal after 10-Qs on the old tag.
-function retaggedYear({ agree = true, staleAnnual = null } = {}) {
+// restated for a disposal after 10-Qs on the old tag. `closes` is the top line each cumulative
+// filing's income statement starts from (costs plus operating income).
+function retaggedYear({ closes = { nine: 385, annual: 550 }, staleAnnual = null } = {}) {
   const raw = rawFacts();
-  const revenue = raw.facts['us-gaap'].Revenues.units.USD;
+  const gaap = raw.facts['us-gaap'];
+  const revenue = gaap.Revenues.units.USD;
   const year = revenue.splice(4, 4).slice(0, 3);
   const contract = year.map(p => ({ ...p }));
-  contract.push({ start: '2024-01-01', end: '2024-09-30', filed: '2024-10-25', val: 385, form: '10-Q', accn: 'test-2024-09-30' });
+  contract.push({ start: '2024-01-01', end: '2024-09-30', filed: '2024-10-25', val: 385, form: '10-Q', accn: 'nine-month' });
   if (staleAnnual != null) contract.push({ start: '2024-01-01', end: '2024-12-31', filed: '2025-01-20', val: staleAnnual, form: '10-K', accn: 'old-annual' });
-  raw.facts['us-gaap'].RevenueFromContractWithCustomerExcludingAssessedTax = { units: { USD: contract } };
-  if (agree) revenue.push({ ...year[2] });
+  gaap.RevenueFromContractWithCustomerExcludingAssessedTax = { units: { USD: contract } };
   revenue.push({ start: '2024-01-01', end: '2024-12-31', filed: '2025-01-25', val: 550, form: '10-K', accn: 'annual' });
+  gaap.CostsAndExpenses = { units: { USD: [] } };
+  for (const [accn, end, filed, form, top] of [['nine-month', '2024-09-30', '2024-10-25', '10-Q', closes.nine],
+    ['annual', '2024-12-31', '2025-01-25', '10-K', closes.annual]]) {
+    gaap.CostsAndExpenses.units.USD.push({ start: '2024-01-01', end, filed, form, accn, val: top * .75 });
+    gaap.OperatingIncomeLoss.units.USD.push({ start: '2024-01-01', end, filed, form, accn, val: top * .25 });
+  }
   return raw;
 }
 
@@ -211,10 +218,12 @@ test('a year re-filed under another revenue tag differences against its own year
   assert.deepEqual(q4.sources.filter(s => s.concept !== 'NetIncomeLoss' && /Revenue/.test(s.concept)).map(s => [s.concept, s.value]).sort(),
     [['RevenueFromContractWithCustomerExcludingAssessedTax', 385], ['Revenues', 550]]);
   assert.equal(forecastFundamentals(x).status, 'estimated');
-  // Without a filing that shows both tags at one value, the two are not assumed to be one basis.
-  const unproven = companyFactsModelInput(retaggedYear({ agree: false }), '2025-02-01');
-  assert.equal(unproven.quarters.at(-1).end, '2024-09-30');
-  assert.equal(forecastFundamentals(unproven).reason, 'insufficient-history');
+  assert.equal(x.quarters.at(-1).revenueReconciled, true);
+  // Nine months of contract revenue that leaves out 75 of rent: its own filing's income statement
+  // starts from 460, so it is not differenced against the annual total.
+  const partial = companyFactsModelInput(retaggedYear({ closes: { nine: 460, annual: 550 } }), '2025-02-01');
+  assert.equal(partial.quarters.at(-1).end, '2024-09-30');
+  assert.equal(forecastFundamentals(partial).reason, 'insufficient-history');
 });
 
 test('a negative quarter from a stale annual takes the current annual of the same basis', () => {
