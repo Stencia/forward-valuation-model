@@ -4,7 +4,7 @@ A deterministic research model developed for [Utensil Desk](https://utensildesk.
 
 This repository maintains the calculation engine introduced in our forward-valuation research comparisons. It is ordinary JavaScript, with no trained AI weights, runtime dependencies, network requests or provider credentials. The initial release was extracted unchanged from our application; subsequent research improvements are versioned here. See [METHODOLOGY.md](METHODOLOGY.md) for the assumptions, accounting safeguards and offline evaluation commands.
 
-Current research version: **`forward-fundamentals-2`**. It dampens extrapolated revenue growth by 50%, distinguishes inconsistent revenue reconstruction from reported sales, and includes loss outcomes in historical earnings scoring. See [the version 2 evaluation](VALIDATION.md).
+Current research version: **`forward-fundamentals-3`**. Version 2 dampens extrapolated revenue growth by 50%, distinguishes inconsistent revenue reconstruction from reported sales, and includes loss outcomes in historical earnings scoring. Version 3 keeps those coefficients, narrows the financial-industry exclusion to businesses the model cannot represent, reconciles revenue re-filed under a different tag, and withholds P/E when diluted shares jump between adjacent quarters. See [the evaluations](VALIDATION.md).
 
 ## Use by Utensil Desk
 
@@ -16,7 +16,7 @@ Before general release, we need broader independent historical validation, relia
 
 ## Comparison previews
 
-These previews show the original `forward-fundamentals-1` model, not version 2. Snapshot retrieved October 25, 2026, using October 23 closing prices and model inputs available by October 25. Published multiples come from [Stock Analysis](https://stockanalysis.com/list/sp-500-stocks/), using each company's statistics page. These are dated research comparisons, not live quotes.
+These previews show the original `forward-fundamentals-1` model, not later versions. Snapshot retrieved October 25, 2026, using October 23 closing prices and model inputs available by October 25. Published multiples come from [Stock Analysis](https://stockanalysis.com/list/sp-500-stocks/), using each company's statistics page. These are dated research comparisons, not live quotes.
 
 ![Forward P/E comparison: 146 paired estimates among 503 S&P 500 tickers, with published P/E on the horizontal axis and model P/E on the vertical axis. Both axes are logarithmic.](docs/images/forward-pe-2026-10-25.png)
 
@@ -68,7 +68,7 @@ Check `status` before reading results. A forecast can retain revenue while withh
 - Projects the next four **unreported fiscal quarters**, which can include an elapsed quarter. This is not rolling next-twelve-months or necessarily the next fiscal year.
 - Projects seasonal revenue from historical growth, then earnings from margins, taxes and diluted shares. Optional revenue guidance must match the forecast horizon exactly.
 - Uses GAAP inputs and mechanical assumptions, not analyst consensus adjustments or company-specific business-driver research.
-- Includes a US GAAP/USD SEC Company Facts adapter and an offline historical evaluator. The adapter excludes financial SIC codes 6000 through 6799; this broad filter can also exclude firms outside conventional finance.
+- Includes a US GAAP/USD SEC Company Facts adapter and an offline historical evaluator. The adapter excludes the financial SIC codes whose revenue and earnings do not fit the model (banks, lenders, broker-dealers, insurance carriers, property lessors and REITs, investment offices); finance services, exchanges, asset managers, insurance brokers and real-estate services are modeled like any other filer.
 - Withholds forecasts for unsupported or inadequate inputs, extreme historical growth and other accounting safeguards. Coverage is intentionally incomplete, particularly for rapidly changing companies.
 - Agreement with published multiples is not evidence of forecast accuracy. Accounting basis and forecast horizon can differ. Historical evaluation uses current restatements as realized outcomes and overlapping windows; see the methodology.
 - This research release is not a validated production forecasting service, fair-value estimate, price target or trading signal.

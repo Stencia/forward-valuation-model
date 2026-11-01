@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { forecastFundamentals, priceForwardForecast } from '../docs/core/forward-valuation-model.js';
-import { companyFactsModelInput, factsAsOf } from '../scripts/forward-valuation-inputs.mjs';
+import { companyFactsModelInput, factsAsOf, unsupportedSic } from '../scripts/forward-valuation-inputs.mjs';
 import { comparePublished, backtestCompany } from '../scripts/evaluate-forward-valuation.mjs';
 const date = (y, m, d) => new Date(Date.UTC(y, m, d)).toISOString().slice(0, 10);
 function input() {
@@ -168,4 +168,75 @@ test('loss outcomes remain in scaled earnings errors and exclusion counts reconc
     Math.abs(zeroFold.earnings.baseline) / zeroFold.revenue.baseline);
   const unsupported = backtestCompany({ ...raw, sic: '6021' }, '2026-02-01');
   assert.equal(unsupported.audit.withheld['unsupported-basis'], unsupported.audit.cutoffs);
+});
+
+test('financial exclusion covers lenders, dealers, insurers and property lessors, not fee businesses', () => {
+  // Banks, card lenders, broker-dealers, insurers (managed care included), REITs, blank checks.
+  for (const sic of [6021, 6022, 6035, 6141, 6153, 6162, 6172, 6189, 6211, 6221, 6311, 6324, 6331, 6399,
+    6500, 6510, 6512, 6513, 6770, 6798, 6799, 99, NaN]) assert.equal(unsupportedSic(sic), true, String(sic));
+  // Finance services (crypto-mining and compute hosts, card networks), exchanges, asset managers,
+  // insurance brokers, real-estate services and royalty owners keep the ordinary guards.
+  for (const sic of [6199, 6200, 6282, 6411, 6531, 6552, 6792, 6794, 6795, 3571, 7374])
+    assert.equal(unsupportedSic(sic), false, String(sic));
+  const raw = rawFacts();
+  assert.equal(companyFactsModelInput({ ...raw, sic: '6199' }, '2025-02-01').eligibility.unsupportedBusiness, false);
+  assert.equal(companyFactsModelInput({ ...raw, sic: '6798' }, '2025-02-01').eligibility.unsupportedBusiness, true);
+  assert.equal(companyFactsModelInput({ ...raw, sic: undefined }, '2025-02-01').eligibility.unsupportedBusiness, true);
+  // A finance-services filer whose top line is net of interest expense is a lender by its own tags.
+  raw.facts['us-gaap'].RevenuesNetOfInterestExpense = { units: { USD: [{ start: '2024-10-01', end: '2024-12-31',
+    filed: '2025-01-25', val: 200, form: '10-K', accn: 'spread' }] } };
+  assert.equal(companyFactsModelInput({ ...raw, sic: '6199' }, '2025-02-01').eligibility.unsupportedBusiness, true);
+  assert.equal(companyFactsModelInput({ ...raw, sic: '6199' }, '2026-03-01').eligibility.unsupportedBusiness, false);
+});
+
+// Quarters tagged as contract revenue, the year re-filed under Revenues: the shape of a 10-K
+// restated for a disposal after 10-Qs on the old tag.
+function retaggedYear({ agree = true, staleAnnual = null } = {}) {
+  const raw = rawFacts();
+  const revenue = raw.facts['us-gaap'].Revenues.units.USD;
+  const year = revenue.splice(4, 4).slice(0, 3);
+  const contract = year.map(p => ({ ...p }));
+  contract.push({ start: '2024-01-01', end: '2024-09-30', filed: '2024-10-25', val: 385, form: '10-Q', accn: 'test-2024-09-30' });
+  if (staleAnnual != null) contract.push({ start: '2024-01-01', end: '2024-12-31', filed: '2025-01-20', val: staleAnnual, form: '10-K', accn: 'old-annual' });
+  raw.facts['us-gaap'].RevenueFromContractWithCustomerExcludingAssessedTax = { units: { USD: contract } };
+  if (agree) revenue.push({ ...year[2] });
+  revenue.push({ start: '2024-01-01', end: '2024-12-31', filed: '2025-01-25', val: 550, form: '10-K', accn: 'annual' });
+  return raw;
+}
+
+test('a year re-filed under another revenue tag differences against its own year to date', () => {
+  const x = companyFactsModelInput(retaggedYear(), '2025-02-01');
+  const q4 = x.quarters.at(-1);
+  assert.deepEqual([q4.start, q4.end, q4.revenue], ['2024-10-01', '2024-12-31', 165]);
+  assert.deepEqual(q4.sources.filter(s => s.concept !== 'NetIncomeLoss' && /Revenue/.test(s.concept)).map(s => [s.concept, s.value]).sort(),
+    [['RevenueFromContractWithCustomerExcludingAssessedTax', 385], ['Revenues', 550]]);
+  assert.equal(forecastFundamentals(x).status, 'estimated');
+  // Without a filing that shows both tags at one value, the two are not assumed to be one basis.
+  const unproven = companyFactsModelInput(retaggedYear({ agree: false }), '2025-02-01');
+  assert.equal(unproven.quarters.at(-1).end, '2024-09-30');
+  assert.equal(forecastFundamentals(unproven).reason, 'insufficient-history');
+});
+
+test('a negative quarter from a stale annual takes the current annual of the same basis', () => {
+  const x = companyFactsModelInput(retaggedYear({ staleAnnual: 300 }), '2025-02-01');
+  assert.equal(x.quarters.at(-1).revenue, 165);
+  assert.equal(x.quarters.at(-1).revenueBasisIssue, undefined);
+  assert.ok(!x.quarters.at(-1).sources.some(s => s.accession === 'old-annual'));
+  // The stale figure alone, with no current-basis annual, stays an input-basis error.
+  const raw = retaggedYear({ staleAnnual: 300 });
+  raw.facts['us-gaap'].Revenues.units.USD.pop();
+  const stale = companyFactsModelInput(raw, '2025-02-01');
+  assert.equal(stale.quarters.at(-1).revenueBasisIssue, true);
+  assert.equal(forecastFundamentals(stale).reason, 'inconsistent-revenue-basis');
+});
+
+test('a share count that jumps between adjacent quarters withholds P/E even when each year repeats it', () => {
+  const x = input();
+  for (const q of x.quarters) if (q.end.endsWith('-12-31')) q.dilutedShares = 30;
+  const f = forecastFundamentals(x);
+  assert.equal(f.status, 'estimated');
+  assert.equal(f.earningsReason, 'share-basis-discontinuity');
+  assert.equal(f.scenarios.base.eps, null);
+  const steady = input(); steady.quarters.forEach((q, i) => { q.dilutedShares = 10 * 1.02 ** i; });
+  assert.equal(forecastFundamentals(steady).earningsReason, null);
 });

@@ -1,5 +1,5 @@
 // Research model only. Scenario bounds are sensitivity assumptions, not confidence intervals.
-export const FORWARD_MODEL_VERSION = 'forward-fundamentals-2';
+export const FORWARD_MODEL_VERSION = 'forward-fundamentals-3';
 const DAY = 86400000;
 export const validDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)
   && Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0, 10) === v;
@@ -52,7 +52,11 @@ export function forecastFundamentals({ quarters, asOf, currency, eligibility = {
   let earningsReason = qs.some((q) => required.some((k) => !finite(q[k]))) ? 'missing-earnings-inputs' : null;
   if (!earningsReason && qs.some((q) => q.dilutedShares <= 0 || q.pretaxIncome <= 0 || q.netIncome <= 0)) earningsReason = 'nonpositive-earnings';
   const shareChanges = !earningsReason ? recent.map((q, i) => q.dilutedShares / qs[i].dilutedShares - 1) : [];
-  if (!earningsReason && shareChanges.some((x) => Math.abs(x) > 0.25)) earningsReason = 'share-basis-discontinuity';
+  // Year-over-year changes miss a split that the filer restated in some periods only: a fourth
+  // quarter derived from a post-split annual and a pre-split nine months repeats its error every
+  // year, so every year-over-year ratio looks flat. Adjacent quarters expose it.
+  const sequentialShareChanges = !earningsReason ? qs.slice(1).map((q, i) => q.dilutedShares / qs[i].dilutedShares - 1) : [];
+  if (!earningsReason && [...shareChanges, ...sequentialShareChanges].some((x) => Math.abs(x) > 0.25)) earningsReason = 'share-basis-discontinuity';
   const taxRates = !earningsReason ? recent.map((q) => q.tax / q.pretaxIncome) : [];
   if (!earningsReason && taxRates.some((t) => t < 0 || t > 0.6)) earningsReason = 'unusual-tax-rate';
   // Material non-operating earnings are not silently projected as recurring operating profit.
