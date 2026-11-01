@@ -64,7 +64,10 @@ forecasts and guidance fiscal-period conversion are outside this first research 
   lacks or replaces one it derived below zero, only when it is positive, and, when it differences
   figures from more than one tag, only when each figure closes its own filing's income statement
   (less cost of revenue it gives the filed gross profit, or less total costs the filed operating
-  income). Such a quarter carries `revenueReconciled: true`. This is the
+  income). Such a quarter carries `revenueReconciled: true`.
+  Not detected: an annual restated for a disposal set against a year-to-date figure that was
+  not restated. Both close their own statements, so the derived fourth quarter is understated
+  by the disposed business's revenue; it is withheld only if it falls to zero or below. This is the
   case of a 10-K that restates the year under a new tag after 10-Qs on the old one: per tag, the
   restated annual cannot be paired with its own year to date, and the stale annual gives a
   negative fourth quarter. A quarter still below zero stays an input-basis error.

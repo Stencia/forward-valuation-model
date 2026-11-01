@@ -33,12 +33,13 @@ export const UNSUPPORTED_SIC_RANGES = Object.freeze([
   [6211, 6221],
   // Insurance carriers: premiums earned against reserve changes, with investment income in earnings.
   [6300, 6399],
-  // Property operators and lessors (not 6500, general real estate), which include REITs filed under these codes: GAAP earnings move
-  // with depreciation and property-sale gains, and the business is valued on FFO, not computed here.
+  // Property operators and lessors (not 6500, general real estate), which include REITs filed
+  // under these codes: GAAP earnings move with depreciation and property-sale gains, and the
+  // business is valued on FFO, which is not computed here.
   [6510, 6519],
   // Holding and investment offices, blank-check companies: no operating business of their own.
   [6700, 6791],
-  // Real estate investment trusts (see 6500-6519) and investors not elsewhere classified, whose
+  // Real estate investment trusts (see 6510-6519) and investors not elsewhere classified, whose
   // earnings are investment gains.
   [6798, 6799],
 ]);
