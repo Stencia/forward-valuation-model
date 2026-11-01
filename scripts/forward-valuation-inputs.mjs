@@ -12,6 +12,48 @@ const METRICS = {
   tax: tags(['IncomeTaxExpenseBenefit']),
   netIncome: tags(['NetIncomeLossAvailableToCommonStockholdersBasic', 'NetIncomeLoss']),
 };
+// SEC SIC codes whose reported figures do not fit this model's revenue x operating-margin bridge.
+// Only these are excluded; the rest of Division H (60-67) faces the same per-company guards as any
+// other filer. Finance services (6199: card networks, payment and crypto-mining/compute firms),
+// exchanges and market services (6200), investment advice (6282), insurance agents and brokers
+// (6411), general real estate (6500, mostly services firms), real-estate agents, managers, dealers
+// and developers (6520-6599) and royalty or patent owners (6792-6795) report fee, sales or royalty
+// revenue with ordinary operating expenses. Some investment advisers consolidate an insurer; their
+// reported revenue then includes premiums and investment income, the top line published P/S also
+// uses, and their earnings meet the same per-company guards.
+// The issue the ranges answer is whether the business has a revenue line and operating margin
+// in the model's sense, never which companies are in them.
+export const UNSUPPORTED_SIC_RANGES = Object.freeze([
+  // Banks and savings institutions: income is net interest income after credit-loss provisions.
+  [6000, 6099],
+  // Non-bank lenders, finance lessors and asset-backed issuers: interest-spread income and
+  // provisions, the same basis as a bank.
+  [6100, 6189],
+  // Broker-dealers and commodity dealers: trading gains and interest income net of interest expense.
+  [6211, 6221],
+  // Insurance carriers: premiums earned against reserve changes, with investment income in earnings.
+  [6300, 6399],
+  // Property operators and lessors (not 6500, general real estate), which include REITs filed
+  // under these codes: GAAP earnings move with depreciation and property-sale gains, and the
+  // business is valued on FFO, which is not computed here.
+  [6510, 6519],
+  // Holding and investment offices, blank-check companies: no operating business of their own.
+  [6700, 6791],
+  // Real estate investment trusts (see 6510-6519) and investors not elsewhere classified, whose
+  // earnings are investment gains.
+  [6798, 6799],
+]);
+export const unsupportedSic = (sic) => !Number.isInteger(sic) || sic < 100
+  || UNSUPPORTED_SIC_RANGES.some(([lo, hi]) => sic >= lo && sic <= hi);
+// A filer whose total revenue is stated net of interest expense earns an interest spread in its top
+// line, whatever its SIC: a card issuer under finance services (6199), a wealth manager under
+// investment advice (6282). None of this adapter's revenue candidates is that total, so the line it
+// would resolve is a part of revenue, and the margin bridge has no place for credit provisions.
+// Only the filer's own recent periodic reports count (a year and a month before the cutoff).
+function interestSpreadTopLine(facts, asOf) {
+  return Object.values(facts['us-gaap']?.RevenuesNetOfInterestExpense?.units || {}).flat()
+    .some((p) => /^10-[QK](\/A)?$/.test(p.form || '') && validDate(p.end) && daysBetween(p.end, asOf) <= 400);
+}
 const origins = (p) => p?.origin?.kind === 'filed' ? [p.origin] : (p?.origin?.terms || []).map((t) => t.origin);
 const newest = (points) => [...points].sort((a, b) => String(b.filed).localeCompare(String(a.filed)))[0];
 
@@ -40,19 +82,101 @@ function sharesFor(facts, q) {
   return value > 0 ? { value, sources: [evidence(year), evidence(prior)], method: 'weighted-share-days' } : null;
 }
 
+// Revenue figures one filer tags under different candidate concepts can be one line on one basis:
+// a 10-K restated for a disposal tags the year's total under Revenues while every 10-Q before it
+// used contract revenue (Applied Digital's fiscal 2025 and 2026). Differencing within each concept
+// then pairs a year with a cumulative figure from another vintage (an annual of 144.2M less nine
+// months of 177.5M gives a quarter of -33.3M) or cannot difference at all (no fourth quarter, so
+// the window has a gap). This line takes, for every reported period, the latest filed figure from
+// the whole-revenue candidates (a partial one only for a period no whole candidate reports) and
+// differences that one line, so the annual and its year-to-date both carry the current basis.
+// A difference across tags stands only when every figure in it closes its own filing's income
+// statement (closesIncomeStatement).
+const FLOW_FORMS = /^(10-Q|10-K|20-F|40-F)(\/A)?$/;
+const IDENTITY_TOLERANCE = 0.001;
+const COST_OF_REVENUE = ['CostOfRevenue', 'CostOfGoodsAndServicesSold', 'CostOfServices', 'CostOfGoodsSold'];
+const TOTAL_COSTS = ['CostsAndExpenses', 'OperatingCostsAndExpenses', 'BenefitsLossesAndExpenses', 'OperatingExpenses'];
+// A revenue figure is the filer's whole top line for its period when the same filing's income
+// statement starts from it: less cost of revenue it gives the filed gross profit, or less total
+// costs the filed operating income. Contract revenue that leaves out rent or interest does not
+// close either, even in a filing where it once equalled the total (a lessor before its first lease).
+function closesIncomeStatement(facts, o) {
+  const at = (tag) => (facts['us-gaap']?.[tag]?.units?.USD || [])
+    .find((p) => p.accn === o.accession && p.start === o.start && p.end === o.end && Number.isFinite(p.val))?.val ?? null;
+  const near = (v, target) => target != null && Math.abs(v - target) <= Math.abs(target) * IDENTITY_TOLERANCE;
+  const gross = at('GrossProfit');
+  if (gross != null && COST_OF_REVENUE.some((tag) => { const c = at(tag); return c != null && near(o.value - c, gross); })) return true;
+  const operating = at('OperatingIncomeLoss');
+  return operating != null && TOTAL_COSTS.some((tag) => { const c = at(tag); return c != null && near(o.value - c, operating); });
+}
+function reconciledRevenueQuarters(facts, candidates) {
+  const chosen = new Map();
+  const conceptOf = new Map();
+  const byConcept = candidates.map(([ns, tag], preference) => {
+    const points = (facts[ns]?.[tag]?.units?.USD || []).filter((p) => Number.isFinite(p.val)
+      && validDate(p.start) && validDate(p.end) && validDate(p.filed) && FLOW_FORMS.test(p.form || '')
+      && daysBetween(p.start, p.end) >= 70 && daysBetween(p.start, p.end) <= 380);
+    return { ns, tag, preference, partial: Boolean(candidates[preference].fillsGapsOnly), points };
+  });
+  const rank = (c, p) => [c.partial ? 1 : 0, p.filed, -c.preference];
+  const better = (a, b) => a[0] !== b[0] ? a[0] < b[0] : a[1] !== b[1] ? a[1] > b[1] : a[2] > b[2];
+  for (const c of byConcept) for (const p of c.points) {
+    const key = `${p.start}/${p.end}`;
+    const prior = chosen.get(key);
+    if (!prior || better(rank(c, p), prior.rank)) chosen.set(key, { rank: rank(c, p), point: p, concept: c });
+  }
+  const pointKey = (p) => `${p.accn || null}|${p.filed || null}|${p.start}|${p.end}|${p.val}`;
+  const points = [...chosen.values()].map(({ point, concept }) => {
+    conceptOf.set(pointKey(point), concept);
+    return point;
+  });
+  const line = operatingQuarterSeries({ reconciled: { revenue: { units: { USD: points } } } },
+    [['reconciled', 'revenue']], 'USD', { depth: 100 });
+  const relabel = (o) => {
+    const c = conceptOf.get(`${o.accession}|${o.filedAt}|${o.start}|${o.end}|${o.value}`);
+    return c ? Object.freeze({ ...o, taxonomy: c.ns, concept: c.tag }) : null;
+  };
+  return line.flatMap((q) => {
+    if (!q.derived) return [];
+    const terms = q.origin.terms.map((t) => ({ origin: relabel(t.origin), coefficient: t.coefficient }));
+    if (terms.some((t) => !t.origin)) return [];
+    // Differencing across tags needs each figure to be the whole top line of its own filing.
+    if (new Set(terms.map((t) => t.origin.concept)).size > 1
+      && !terms.every((t) => closesIncomeStatement(facts, t.origin))) return [];
+    return [{ ...q, origin: Object.freeze({ kind: 'derived', method: q.origin.method, terms: Object.freeze(terms) }),
+      reconciled: true }];
+  });
+}
+
+// Fills a quarter the per-concept series lacks, or replaces one it derived below zero, with the
+// single-line derivation. A reconciled figure that is itself not positive changes nothing: the
+// negative quarter stays an input-basis error and the gap stays a gap.
+function withReconciledRevenue(series, reconciled) {
+  const out = [...series];
+  for (const r of reconciled) {
+    if (!(r.val > 0)) continue;
+    const same = out.findIndex((q) => q.start === r.start && q.end === r.end);
+    if (same >= 0) {
+      if (out[same].derived && out[same].val < 0) out[same] = r;
+    } else if (!out.some((q) => q.start <= r.end && q.end >= r.start)) out.push(r);
+  }
+  return out.sort((a, b) => a.end.localeCompare(b.end));
+}
+
 export function companyFactsModelInput(raw, asOf) {
   const facts = factsAsOf(raw, asOf);
   const revenueTags = withPartialRevenueLast(REVENUE, partialRevenueConcepts(facts, REVENUE));
   const resolve = (candidates) => operatingQuarterSeries(facts, candidates, 'USD', { depth: 100 });
   const series = Object.fromEntries(Object.entries(METRICS).map(([key, cs]) => [key, resolve(cs)]));
-  const revenues = resolve(revenueTags);
+  const revenues = withReconciledRevenue(resolve(revenueTags), reconciledRevenueQuarters(facts, revenueTags));
   const quarters = revenues.map((r) => {
     const sources = [...origins(r)];
     // A negative reconstructed revenue is evidence of incompatible cumulative inputs,
     // not reported negative sales. Preserve the source evidence but withhold the value.
     const revenueBasisIssue = Boolean(r.derived && r.val < 0);
     const row = { start: r.start, end: r.end, currency: 'USD',
-      revenue: revenueBasisIssue ? null : r.val, ...(revenueBasisIssue ? { revenueBasisIssue: true } : {}) };
+      revenue: revenueBasisIssue ? null : r.val, ...(revenueBasisIssue ? { revenueBasisIssue: true } : {}),
+      ...(r.reconciled ? { revenueReconciled: true } : {}) };
     for (const [key, points] of Object.entries(series)) {
       const p = points.find((p) => p.start === r.start && p.end === r.end);
       row[key] = p?.val ?? null;
@@ -67,7 +191,7 @@ export function companyFactsModelInput(raw, asOf) {
   });
   const sic = Number(raw.sic);
   return { asOf, currency: 'USD', quarters, eligibility: {
-    unsupportedBusiness: !facts['us-gaap'] || !Number.isInteger(sic) || sic < 100 || (sic >= 6000 && sic < 6800),
+    unsupportedBusiness: !facts['us-gaap'] || unsupportedSic(sic) || interestSpreadTopLine(facts, asOf),
     shareBasisUnresolved: raw.shareBasisUnresolved === true,
   }, provenance: { cik: raw.cik, name: raw.entityName,
     source: `https://data.sec.gov/api/xbrl/companyfacts/CIK${String(raw.cik).padStart(10, '0')}.json`,

@@ -40,14 +40,44 @@ forecasts and guidance fiscal-period conversion are outside this first research 
 - Eight contiguous quarters with positive revenue, publication dates no later than the cutoff and
   latest reported period no more than 185 days old. A year-over-year revenue change outside
   -50% to +100% withholds the model rather than clipping a structural change into a plausible result.
-- Adapter coverage is US GAAP, USD, with an explicit SIC from SEC submissions. Financial SIC
-  6000-6799, IFRS and explicitly unresolved share bases are excluded. Missing SIC is excluded.
+- Adapter coverage is US GAAP, USD, with an explicit SIC from SEC submissions. Missing SIC, IFRS
+  and explicitly unresolved share bases are excluded. SIC is read from today's submissions file, not as of each
+  historical cutoff. Financial SIC codes are excluded only where
+  the business has no revenue line and operating margin in this model's sense: banks and savings
+  institutions (6000-6099), non-bank lenders, finance lessors and asset-backed issuers (6100-6189),
+  broker-dealers (6211-6221), insurance carriers (6300-6399, managed care included), property
+  operators and lessors (6510-6519) and REITs (6798), holding and investment offices and blank checks (6700-6791), and
+  investors not elsewhere classified (6799). Finance services (6199), exchanges (6200), investment
+  advice (6282), insurance brokers (6411), general real estate (6500), real-estate services and
+  developers (6520-6599) and
+  royalty owners (6792-6795) face the same per-company guards as every other filer. The ranges
+  name kinds of business, never companies; `UNSUPPORTED_SIC_RANGES` gives each one's reason.
+  Whatever its SIC, a filer that reports `RevenuesNetOfInterestExpense` in a periodic report
+  ending within 400 days of the cutoff earns an interest spread in its top line (a card issuer
+  under 6199, a wealth manager under 6282) and is excluded: none of the adapter's revenue
+  candidates is that total, so the resolved line would be a part of revenue.
 - Revenue resolution reuses the existing quarterly flow reconstruction and partial-revenue detector.
   Only facts published by the cutoff enter the resolver; subsequent restatements cannot enter training.
+- Revenue is also resolved as one line across its candidate tags before cumulative differencing:
+  for each reported period, the latest filed figure from the whole-revenue tags (a partial tag only
+  for a period no whole tag reports). A quarter from that line fills a quarter the per-tag series
+  lacks or replaces one it derived below zero, only when it is positive, and, when it differences
+  figures from more than one tag, only when each figure closes its own filing's income statement
+  (less cost of revenue it gives the filed gross profit, or less total costs the filed operating
+  income). Such a quarter carries `revenueReconciled: true`. The reconciliation covers the
+  case of a 10-K that restates the year under a new tag after 10-Qs on the old one: per tag, the
+  restated annual cannot be paired with its own year to date, and the stale annual gives a
+  negative fourth quarter. A quarter still below zero stays an input-basis error.
+  Not detected: an annual restated for a disposal set against a year-to-date figure that was
+  not restated. Both close their own statements, so the derived fourth quarter is understated
+  by the disposed business's revenue; it is withheld only if it falls to zero or below.
 - Diluted weighted shares use direct quarterly facts, or annual minus nine-month **share-days**,
   divided by quarter days. Share counts are not additive revenue flows. The annual Q4 derivation
   is an approximation to reported weighted averages, not a reconstruction of the diluted EPS rules.
-- Missing earnings inputs, nonpositive profits, year-over-year share changes above 25%, negative
+- Missing earnings inputs, nonpositive profits, diluted share changes above 25% year over year or
+  between adjacent quarters (version 3: a split restated in some periods only repeats each year;
+  this also withholds P/E for up to a year after an ordinary split, until the filer's comparatives
+  are all on the new basis), negative
   or above-60% recent effective taxes, non-operating income above 15% of quarterly revenue, and
   common-earnings reconciliation above 3% of revenue withhold P/E. Revenue can remain available.
 - Ordinary equity/share basis must be verified by the caller. ADR conversion, complex capital
@@ -98,7 +128,7 @@ The historical evaluator now reports the reason/count for every withheld cutoff,
 
 MAPE remains restricted to positive realized outcomes. A second earnings score is absolute net-income error divided by the trailing-year revenue known at prediction time. It includes zero and negative realized net income, uses the same denominator for model and baseline, and is reported separately from MAPE. Forecasts withheld before the outcome are counted rather than assigned an invented prediction. Revenue has its own positive-outcome eligibility.
 
-A negative quarter reconstructed by subtracting cumulative revenue is withheld as `inconsistent-revenue-basis`; source evidence remains available. This does not fill missing quarters or claim to repair restatements. Directly filed negative revenue still fails the existing positive-revenue guard. Financial SIC exclusions and extreme-growth guards remain unchanged pending verified alternatives.
+A negative quarter reconstructed by subtracting cumulative revenue is withheld as `inconsistent-revenue-basis`; source evidence remains available. In version 2 nothing filled missing quarters or repaired restatements; version 3's one-line reconciliation (above) does so only under its income-statement condition. Directly filed negative revenue still fails the existing positive-revenue guard. Extreme-growth guards remain unchanged pending a verified alternative. Version 3 narrows the SIC exclusion, adds the interest-spread exclusion and the one-line revenue reconciliation in the adapter, and adds the adjacent-quarter share check to the engine. Forecast coefficients are unchanged; see VALIDATION.md, "Version 3 coverage revision".
 
 The offline `scripts/compare-history.mjs` compares this checkout with a frozen baseline checkout. Supply a JSON manifest of `{ "symbol": "EXAMPLE", "cik": "0000000001" }` rows and raw SEC snapshots named by ten-digit CIK. It deduplicates issuers, excludes all share classes of prior development firms, then sorts by SHA-256 of `forward-v2-validation:` plus padded CIK. The first 30 issuers are development and the next 30 are holdout; choose the split before inspecting outcomes. It reports paired errors for identical cutoffs, horizons, realized outcomes and baselines, both pooled and with equal company weights.
 
