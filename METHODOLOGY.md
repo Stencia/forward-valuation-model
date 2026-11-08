@@ -120,8 +120,48 @@ forecasts and guidance fiscal-period conversion are outside this first research 
 No network, secrets, production writes or scheduled jobs are inside the evaluator. Supply raw
 SEC companyfacts JSON files named by ticker, enriched with `sic` from the same issuer's SEC
 submissions. Any symbol with appropriate evidence can be used; there is no maintained ticker list.
-Retain these input snapshots outside Git because SEC companyfacts changes as filings arrive.
+Keep these inputs outside Git; SEC Company Facts grows as filings arrive (see the store below).
 The report records a SHA-256 fingerprint of each parsed raw companyfacts input.
+
+`scripts/refresh-sec-store.mjs` keeps such a store: one enriched Company Facts file per CIK, links
+by ticker under `by-symbol/` for the evaluator, and `index.json` with each issuer's newest
+periodic report, fetch time and SHA-256. A refresh reads each issuer's small submissions record and
+downloads its Company Facts again only when the newest 10-K, 10-Q, 20-F or 40-F with XBRL
+(transition-period and amended forms included) is not yet in the stored copy. A report accepted
+before SEC adds it to Company Facts stays pending and is fetched again on each run until it
+appears, or until a download more than 30 days after its acceptance still lacks it. SEC does not
+always add a filed report: on November 8, 2026, 30 of the 500 S&P 500 issuers (Citigroup, NextEra,
+AEP and Johnson Controls among them, many of them utilities and REITs filing combined reports)
+lacked one to three recent 10-Qs while the rest of each file was current. Each refresh lists such
+issuers as `incomplete`, with the missing reports of the last 400 days (amendments aside), and
+`index.json` keeps them under `missingReports`; their model inputs are older than their filings.
+An incomplete issuer is downloaded again once its copy is a week old, in case SEC has added
+them. Incomplete and pending issuers do not fail the run; failures, missing issuers and a stop
+do. An issuer with no Company Facts
+yet is retried the same way, then only after its next financial report; a 404 for an issuer
+already stored fails the run and keeps the stored copy. Other filings do not trigger a
+download; `--force` downloads all. SEC's 403, or a 429 that outlasts its retries, stops the run with
+progress saved; timeouts, network and server errors are retried. Only one refresh runs at a time.
+A ticker moves to the CIK the manifest gives it; `--prune` also removes links and index symbols
+for tickers outside the manifest, so pass it only with the full membership.
+
+Company Facts keeps each filing's value with its filing date, including values later restated, and
+the adapter filters every namespace by that date, so the current copy rebuilds the facts known at
+an earlier cutoff, as far as Company Facts holds them. It does not rebuild: a report Company Facts
+never absorbed (listed as `incomplete`); a fact SEC has since withdrawn or reprocessed; facts filed
+under a predecessor CIK; and the SIC, entity name and ticker-to-CIK mapping, which are current
+values. Each refresh overwrites the file, so an earlier report's SHA-256 identifies the exact input
+it read but cannot recover it. Copy the store first when an evaluation must be replayed byte for
+byte. Keep the store outside the repository.
+
+```sh
+SEC_USER_AGENT="Your Name contact@example.com" node scripts/refresh-sec-store.mjs \
+  --store ~/data/sec-companyfacts --manifest ~/data/sec-companyfacts/manifest.json
+```
+
+The manifest has the same `{ "symbol": ..., "cik": ... }` rows as `compare-history.mjs` below.
+Pass the store as `--input-dir` to `compare-history.mjs`, and its `by-symbol/` directory to the
+evaluator.
 
 ```sh
 node scripts/evaluate-forward-valuation.mjs \
