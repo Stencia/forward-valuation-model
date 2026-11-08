@@ -21,11 +21,12 @@ function fakeSec() {
     const cik = url.match(/CIK(\d{10})/)[1]; const issuer = sec.issuers[cik];
     if (!issuer) return { ok: false, status: 404, headers: new Map() };
     if (url.includes('/submissions/')) {
-      const f = issuer.filings;
+      const f = [...issuer.filings].reverse();
       return json({ name: `Issuer ${cik}`, sic: '3571', filings: { recent: { accessionNumber: f.map((x) => x.accession),
         form: f.map((x) => x.form), acceptanceDateTime: f.map((x) => x.acceptedAt), filingDate: f.map((x) => x.acceptedAt.slice(0, 10)),
         isXBRL: f.map((x) => (x.form === '4' ? 0 : 1)) } } });
     }
+    if (issuer.noFacts) return { ok: false, status: 404, headers: new Map() };
     return json({ cik: Number(cik), entityName: `Issuer ${cik}`, facts: { 'us-gaap': { Revenues: { units: { USD:
       issuer.facts.map((accn, i) => ({ accn, val: i, filed: '2026-01-01', start: '2025-01-01', end: '2025-12-31', form: '10-K' })) } } } } });
   };
@@ -97,7 +98,11 @@ test('links follow the manifest: removed and reassigned tickers are cleaned up',
   const sec = fakeSec();
   await run(store, sec, ENTRIES());
   const moved = parseManifest([{ symbol: 'AAA', cik: 1 }, { symbol: 'BBC', cik: 1 }]);
+  // Without --prune a partial manifest leaves other links alone, but a moved ticker moves.
   await run(store, sec, moved);
+  assert.ok(existsSync(join(store, 'by-symbol', 'BBB.json')));
+  assert.deepEqual(JSON.parse(readFileSync(join(store, 'index.json'), 'utf8'))['0000000002'].symbols, ['BBB']);
+  await run(store, sec, moved, { prune: true });
   assert.deepEqual(readdirSync(join(store, 'by-symbol')).sort(), ['AAA.json', 'BBC.json']);
   assert.equal(readlinkSync(join(store, 'by-symbol', 'BBC.json')), '../0000000001.json');
   const index = JSON.parse(readFileSync(join(store, 'index.json'), 'utf8'));
@@ -105,6 +110,30 @@ test('links follow the manifest: removed and reassigned tickers are cleaned up',
   assert.deepEqual(index['0000000002'].symbols, []);
   assert.ok(existsSync(join(store, '0000000002.json')));
   assert.throws(() => parseManifest([{ symbol: 'AAA', cik: 1 }, { symbol: 'AAA', cik: 2 }]), /maps to CIKs/);
+}));
+
+test('a report pending at download is fetched again on the next run, however late that run is', () => withStore(async (store) => {
+  const sec = fakeSec();
+  await run(store, sec, ENTRIES());
+  sec.file('0000000001', 'a-10q-2', '10-Q', '2026-11-05T21:00:00.000Z');
+  assert.deepEqual((await run(store, sec, ENTRIES(), { now: () => '2026-11-05T22:00:00.000Z' })).pending, ['0000000001']);
+  sec.issuers['0000000001'].facts.push('a-10q-2');
+  sec.calls.length = 0;
+  assert.deepEqual((await run(store, sec, ENTRIES(), { now: () => '2026-12-10T00:00:00.000Z' })).fetched, ['0000000001']);
+  assert.equal(sec.factsCalls(), 1);
+}));
+
+test('issuers without financial reports or without XBRL data are not downloaded every run', () => withStore(async (store) => {
+  const sec = fakeSec();
+  sec.issuers['0000000003'] = { filings: [{ accession: 'c-8k', form: '8-K', acceptedAt: '2026-10-01T00:00:00.000Z' }], facts: [] };
+  sec.issuers['0000000004'] = { filings: [{ accession: 'd-10q', form: '10-Q', acceptedAt: '2026-10-01T00:00:00.000Z' }], facts: [], noFacts: true };
+  const entries = parseManifest([{ symbol: 'CCC', cik: 3 }, { symbol: 'DDD', cik: 4 }]);
+  const first = await run(store, sec, entries);
+  assert.deepEqual(first.fetched, ['0000000003']); assert.deepEqual(first.noFacts, ['0000000004']);
+  sec.calls.length = 0;
+  const second = await run(store, sec, entries);
+  assert.deepEqual(second.unchanged, ['0000000003']); assert.deepEqual(second.noFacts, ['0000000004']);
+  assert.equal(sec.factsCalls(), 0);
 }));
 
 test('SEC 403 stops the run with progress saved; transient errors retry and honor Retry-After', () => withStore(async (store) => {
@@ -120,10 +149,12 @@ test('SEC 403 stops the run with progress saved; transient errors retry and hono
   blocked.issuers['0000000001'].facts.push('a-10q-2');
   let n = 0; const inner = blocked.fetch;
   blocked.fetch = async (url, opts) => (url.includes('0000000002') && ++n === 1 ? { ok: false, status: 403, headers: new Map() } : inner(url, opts));
-  const result = await run(store, blocked, ENTRIES());
+  const result = await run(store, blocked, parseManifest([{ symbol: 'AAA', cik: 1 }, { symbol: 'BBB', cik: 2 }]), { prune: true });
   assert.match(result.stopped, /403/);
   assert.equal(blocked.calls.filter((u) => u.includes('0000000002')).length, 0);
   assert.ok(!existsSync(join(store, '.lock')));
+  // A stopped run does not prune: BBC was never reached, so its link stays.
+  assert.ok(existsSync(join(store, 'by-symbol', 'BBC.json')));
   assert.equal(JSON.parse(readFileSync(join(store, 'index.json'), 'utf8'))['0000000001'].latestFinancial.accession, 'a-10q-2');
 }));
 
@@ -154,5 +185,34 @@ test('the newest financial report ignores filings without XBRL statements', () =
   const recent = { accessionNumber: ['x', 'y', 'z'], form: ['10-Q', '8-K', '10-K/A'],
     acceptanceDateTime: ['2026-05-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z'], isXBRL: [1, 1, 0] };
   assert.equal(latestFinancialReport({ filings: { recent } }).accession, 'x');
+  // A transition-period report (fiscal year change) is a financial report.
+  assert.equal(latestFinancialReport({ filings: { recent: { ...recent, form: ['10-Q', '8-K', '10-KT'], isXBRL: [1, 1, 1] } } }).accession, 'z');
   assert.equal(latestFinancialReport({}), null);
 });
+test('exhausted rate limiting stops the run; unreadable bodies and timeouts retry', () => withStore(async (store) => {
+  const limited = fakeSec();
+  limited.fetch = async () => ({ ok: false, status: 429, headers: new Map([['retry-after', '9999']]) });
+  const slept = [];
+  const stopped = await run(store, limited, ENTRIES(), { sleep: async (ms) => { slept.push(ms); } });
+  assert.match(stopped.stopped, /rate limited/);
+  assert.ok(Math.max(...slept) <= 120000);
+  const sec = fakeSec();
+  sec.responses.push(() => ({ ok: true, status: 200, headers: new Map(), json: async () => { throw new SyntaxError('truncated'); } }));
+  assert.equal((await run(store, sec, ENTRIES())).fetched.length, 2);
+  const hanging = { fetch: (url, { signal }) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason))) };
+  const timedOut = await run(store, hanging, parseManifest([{ symbol: 'AAA', cik: 1 }]), { timeoutMs: 5 });
+  assert.equal(timedOut.failed.length, 1);
+}));
+
+test('an unreadable lock is stale, and a second refresh in the same process is refused', () => withStore(async (store) => {
+  const sec = fakeSec();
+  writeFileSync(join(store, '.lock'), '');
+  assert.equal((await run(store, sec, ENTRIES())).fetched.length, 2);
+  let release; const gate = new Promise((r) => { release = r; });
+  const slow = { fetch: async (url, opts) => { await gate; return sec.fetch(url, opts); } };
+  const first = run(store, slow, ENTRIES());
+  await new Promise((r) => setTimeout(r, 5));
+  await assert.rejects(run(store, sec, ENTRIES()), /already holds/);
+  release(); await first;
+}));
+

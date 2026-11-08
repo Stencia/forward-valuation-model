@@ -98,11 +98,15 @@ The report records a SHA-256 fingerprint of each parsed raw companyfacts input.
 `scripts/refresh-sec-store.mjs` keeps such a store: one enriched Company Facts file per CIK, links
 by ticker under `by-symbol/` for the evaluator, and `index.json` with each issuer's newest
 periodic report, fetch time and SHA-256. A refresh reads each issuer's small submissions record and
-downloads its Company Facts again only when the newest 10-K, 10-Q, 20-F or 40-F with XBRL (or an
-amendment) is not yet in the stored copy. A report accepted before SEC adds it to Company Facts
-stays pending and is fetched again on each run until it appears, or for 30 days. Other filings do
-not trigger a download; `--force` downloads all. SEC's 403 stops the run; 429 and server errors are
-retried. Only one refresh runs at a time, and links and index symbols follow the manifest.
+downloads its Company Facts again only when the newest 10-K, 10-Q, 20-F or 40-F with XBRL
+(transition-period and amended forms included) is not yet in the stored copy. A report accepted
+before SEC adds it to Company Facts stays pending and is fetched again on each run until it
+appears, or until a download more than 30 days after its acceptance still lacks it. An issuer with
+no XBRL data yet is retried only after its next financial report. Other filings do not trigger a
+download; `--force` downloads all. SEC's 403, or a 429 that outlasts its retries, stops the run with
+progress saved; timeouts, network and server errors are retried. Only one refresh runs at a time.
+A ticker moves to the CIK the manifest gives it; `--prune` also removes links and index symbols
+for tickers outside the manifest, so pass it only with the full membership.
 
 Company Facts keeps each filing's value with its filing date, including values later restated, and
 the adapter filters every namespace by that date, so the current copy rebuilds the facts known at
