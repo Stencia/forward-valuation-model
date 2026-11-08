@@ -105,8 +105,10 @@ appears, or until a download more than 30 days after its acceptance still lacks 
 always add a filed report: on November 8, 2026, 30 of the 500 S&P 500 issuers (Citigroup, NextEra,
 AEP and Johnson Controls among them, many of them utilities and REITs filing combined reports)
 lacked one to three recent 10-Qs while the rest of each file was current. Each refresh lists such
-issuers as `incomplete`, with the missing reports, and `index.json` keeps them under
-`missingReports`; their model inputs are older than their filings. An issuer with no Company Facts
+issuers as `incomplete`, with the missing reports of the last 400 days (amendments aside), and
+`index.json` keeps them under `missingReports`; their model inputs are older than their filings.
+An incomplete issuer is downloaded again once its copy is a week old, in case SEC has added them.
+Incomplete and pending issuers do not fail the run; failures, missing issuers and a stop do. An issuer with no Company Facts
 yet is retried the same way, then only after its next financial report; a 404 for an issuer
 already stored fails the run and keeps the stored copy. Other filings do not trigger a
 download; `--force` downloads all. SEC's 403, or a 429 that outlasts its retries, stops the run with

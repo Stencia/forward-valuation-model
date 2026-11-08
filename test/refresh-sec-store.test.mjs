@@ -276,7 +276,39 @@ test('entries indexed before gaps were tracked are checked once, and an unchange
   writeFileSync(indexPath, JSON.stringify(index));
   sec.calls.length = 0;
   const result = await run(store, sec, ENTRIES());
-  assert.deepEqual(result.incomplete.map((x) => x.cik), ['0000000001']);
+  assert.deepEqual(result.incomplete.map((x) => [x.cik, x.missing.map((m) => m.accession)]), [['0000000001', ['a-10q-gap']]]);
+  assert.equal(sec.factsCalls(), 0);
+}));
+test('gaps are rechecked weekly, age out after 400 days, and exclude amendments', () => withStore(async (store) => {
+  const sec = fakeSec();
+  sec.file('0000000001', 'a-10q-gap', '10-Q', '2026-09-01T16:00:00.000Z');
+  sec.file('0000000001', 'a-10ka', '10-K/A', '2026-09-15T16:00:00.000Z');
+  sec.file('0000000001', 'a-10q-3', '10-Q', '2026-10-30T16:00:00.000Z');
+  sec.issuers['0000000001'].facts.push('a-10q-3');
+  const day = (d) => ({ now: () => d });
+  assert.deepEqual((await run(store, sec, ENTRIES(), day('2026-11-07T00:00:00.000Z'))).incomplete.map((x) => x.missing.map((m) => m.accession)), [['a-10q-gap']]);
+  // Within a week: no download. After a week: downloaded again, and the report SEC added is picked up.
+  sec.issuers['0000000001'].facts.push('a-10q-gap');
+  sec.calls.length = 0; await run(store, sec, ENTRIES(), day('2026-11-10T00:00:00.000Z'));
+  assert.equal(sec.factsCalls(), 0);
+  const later = await run(store, sec, ENTRIES(), day('2026-11-20T00:00:00.000Z'));
+  assert.deepEqual(later.fetched, ['0000000001']); assert.deepEqual(later.incomplete, []);
+  // A gap older than 400 days is no longer listed, without a download.
+  sec.issuers['0000000001'].facts = sec.issuers['0000000001'].facts.filter((a) => a !== 'a-10q-gap');
+  await run(store, sec, ENTRIES(), { force: true, ...day('2026-11-21T00:00:00.000Z') });
+  sec.calls.length = 0;
+  const aged = await run(store, sec, ENTRIES(), day('2027-10-10T00:00:00.000Z'));
+  assert.deepEqual(aged.incomplete, []);
+}));
+
+test('a registrant with no financial report and no Company Facts is not retried or failed every run', () => withStore(async (store) => {
+  const sec = fakeSec();
+  sec.issuers['0000000005'] = { filings: [{ accession: 'e-8k', form: '8-K', acceptedAt: '2026-10-01T00:00:00.000Z' }], facts: [], noFacts: true };
+  const entries = parseManifest([{ symbol: 'EEE', cik: 5 }]);
+  assert.deepEqual((await run(store, sec, entries)).noFacts, ['0000000005']);
+  sec.calls.length = 0;
+  const second = await run(store, sec, entries);
+  assert.deepEqual(second.failed, []); assert.deepEqual(second.noFacts, ['0000000005']);
   assert.equal(sec.factsCalls(), 0);
 }));
 

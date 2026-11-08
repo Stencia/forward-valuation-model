@@ -26,8 +26,11 @@ const FINANCIAL_FORMS = /^(10-KT?|10-QT?|20-F|40-F)(\/A)?$/;
 // file was current. A report that a download this many days after its acceptance still lacks is no
 // longer waited for, so the issuer is not downloaded every run, and is reported as incomplete.
 const SETTLE_DAYS = 30;
-// Financial reports this recent are checked against the stored copy and listed when missing.
+// Financial reports this recent are checked against the stored copy and listed when missing
+// (amendments excluded: their original is the statement). An issuer with such gaps is downloaded
+// again once its copy is this many days old, in case SEC has since added them.
 const CHECK_DAYS = 400;
+const RECHECK_DAYS = 7;
 const MAX_RETRY_AFTER_S = 120;
 
 export class FatalSecError extends Error {}
@@ -142,8 +145,9 @@ export async function refreshStore({ store, entries, userAgent, force = false, p
         if (!submissions) { summary.missing.push(cik); continue; }
         const reports = financialReports(submissions);
         const latest = reports.at(-1) ?? null;
-        const recentReports = reports.filter((x) => Date.parse(now()) - Date.parse(x.acceptedAt) <= CHECK_DAYS * DAY);
-        const missingFrom = (accessions) => recentReports.filter((x) => !accessions.has(x.accession));
+        const inWindow = (x) => Date.parse(now()) - Date.parse(x.acceptedAt) <= CHECK_DAYS * DAY;
+        const recentReports = reports.filter(inWindow);
+        const missingFrom = (accessions) => recentReports.filter((x) => !accessions.has(x.accession) && !/\/A$/.test(x.form));
         const prior = index[cik];
         if (prior) delete prior.latestFiling;
         // The stored file is the one indexed: same size and modification time as recorded, or
@@ -154,10 +158,13 @@ export async function refreshStore({ store, entries, userAgent, force = false, p
         if (intact) Object.assign(prior, { size: stat.size, mtimeMs: stat.mtimeMs });
         // Settled: the indexed copy contains the newest report, or was downloaded more than 30 days
         // after that report's acceptance and still lacks it.
-        const settled = (entry) => entry?.latestFinancial?.accession === latest?.accession
+        // With no financial report yet, an entry that has none recorded is settled.
+        const settled = (entry) => !latest ? !entry?.latestFinancial : entry?.latestFinancial?.accession === latest.accession
           && (entry.inFacts || Date.parse(entry.fetchedAt) - Date.parse(latest.acceptedAt) > SETTLE_DAYS * DAY);
-        let current = !force && intact && (latest ? settled(prior) : !prior.latestFinancial);
-        if (!current && !force && intact && latest) {
+        const gapsDue = (entry) => (entry?.missingReports || []).some((x) => x.accession !== latest?.accession || entry.inFacts)
+          && Date.parse(now()) - Date.parse(entry.fetchedAt) > RECHECK_DAYS * DAY;
+        let current = !force && intact && settled(prior) && !gapsDue(prior);
+        if (!current && !force && intact && latest && !gapsDue(prior)) {
           const accessions = factsAccessions(JSON.parse(readFileSync(file, 'utf8')));
           if (accessions.has(latest.accession)) {
             index[cik] = { ...prior, latestFinancial: latest, inFacts: true, missingReports: missingFrom(accessions) };
