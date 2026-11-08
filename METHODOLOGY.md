@@ -104,7 +104,9 @@ forecasts and guidance fiscal-period conversion are outside this first research 
   filer's reported diluted EPS by more than half a cent plus 5% (cent rounding and small two-class
   allocations), when a recent quarter is `unconfirmed`, or when a recent quarter's diluted
   numerator departs from basic by more than 5% while another recent quarter is on basic with no
-  reported EPS to check it. Not detected: an adjustment in a fourth quarter of a filer that tags
+  reported EPS to check it. A filer whose fourth quarter cannot be confirmed this way, or whose
+  filed diluted figure is more than 50% from basic with no EPS (exchangeable-unit filers such as
+  TPG), is withheld rather than estimated. Not detected: an adjustment in a fourth quarter of a filer that tags
   no diluted numerator, since no quarterly fourth-quarter EPS is filed.
 - Ordinary equity/share basis must be verified by the caller. ADR conversion, complex capital
   structures, subsequent splits and corporate actions require the existing production share-basis
