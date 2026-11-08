@@ -11,7 +11,11 @@ const METRICS = {
     'IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments']),
   tax: tags(['IncomeTaxExpenseBenefit']),
   netIncome: tags(['NetIncomeLossAvailableToCommonStockholdersBasic', 'NetIncomeLoss']),
+  // The diluted-EPS numerator: basic earnings after the filer's own dilutive-security adjustments,
+  // including a subsidiary's dilutive securities (Wynn Resorts tags only the second concept).
+  dilutedNetIncome: tags(['NetIncomeLossAvailableToCommonStockholdersDiluted', 'NetIncomeLossAttributableToParentDiluted']),
 };
+const DILUTED_EPS = ['EarningsPerShareDiluted', 'EarningsPerShareBasicAndDiluted'];
 // SEC SIC codes whose reported figures do not fit this model's revenue x operating-margin bridge.
 // Only these are excluded; the rest of Division H (60-67) faces the same per-company guards as any
 // other filer. Finance services (6199: card networks, payment and crypto-mining/compute firms),
@@ -80,6 +84,17 @@ function sharesFor(facts, q) {
   const value = (year.val * (daysBetween(year.start, year.end) + 1) - prior.val * (daysBetween(prior.start, prior.end) + 1))
     / (daysBetween(q.start, q.end) + 1);
   return value > 0 ? { value, sources: [evidence(year), evidence(prior)], method: 'weighted-share-days' } : null;
+}
+
+// Per-share figures are not additive flows either: only a directly reported quarter is used.
+function dilutedEpsFor(facts, q) {
+  for (const tag of DILUTED_EPS) {
+    const p = newest((facts['us-gaap']?.[tag]?.units?.['USD/shares'] || [])
+      .filter((p) => /^10-[QK](\/A)?$/.test(p.form) && Number.isFinite(p.val) && p.start === q.start && p.end === q.end));
+    if (p) return { value: p.val, source: { accession: p.accn, filedAt: p.filed, concept: tag, unit: 'USD/shares',
+      start: p.start, end: p.end, value: p.val } };
+  }
+  return null;
 }
 
 // Revenue figures one filer tags under different candidate concepts can be one line on one basis:
@@ -182,6 +197,14 @@ export function companyFactsModelInput(raw, asOf) {
       row[key] = p?.val ?? null;
       sources.push(...origins(p));
     }
+    // Earnings are divided by diluted shares, so the filer's diluted numerator is preferred.
+    row.basicNetIncome = row.netIncome;
+    if (Number.isFinite(row.dilutedNetIncome)) row.netIncome = row.dilutedNetIncome;
+    row.earningsNumerator = Number.isFinite(row.dilutedNetIncome) ? 'diluted' : 'basic';
+    delete row.dilutedNetIncome;
+    const eps = dilutedEpsFor(facts, r);
+    row.reportedDilutedEPS = eps?.value ?? null;
+    if (eps) sources.push(eps.source);
     const shares = sharesFor(facts, r);
     row.dilutedShares = shares?.value ?? null;
     sources.push(...(shares?.sources || []));

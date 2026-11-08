@@ -80,6 +80,17 @@ forecasts and guidance fiscal-period conversion are outside this first research 
   are all on the new basis), negative
   or above-60% recent effective taxes, non-operating income above 15% of quarterly revenue, and
   common-earnings reconciliation above 3% of revenue withhold P/E. Revenue can remain available.
+- Net income is the diluted-EPS numerator (version 4), because EPS divides it by diluted shares.
+  Dilutive securities move that numerator away from basic earnings: convertible interest and
+  exchangeable partnership units add to it, a warrant liability's fair-value gain is removed from
+  it. The adapter takes `NetIncomeLossAvailableToCommonStockholdersDiluted`, then
+  `NetIncomeLossAttributableToParentDiluted` (a subsidiary's dilutive securities), and keeps basic
+  earnings only where neither is filed. P/E is withheld (`diluted-earnings-basis`) when a recent
+  quarter's net income over diluted shares misses the filer's directly reported diluted EPS by
+  more than half a cent plus 5% (cent rounding and small two-class allocations), or when the
+  filer's diluted numerator departs from basic by more than 5% in one recent quarter while another
+  stays on basic with no reported EPS to check it against. Not detected: an untagged adjustment
+  in a fourth quarter, which has no directly reported quarterly EPS.
 - Ordinary equity/share basis must be verified by the caller. ADR conversion, complex capital
   structures, subsequent splits and corporate actions require the existing production share-basis
   resolver before any rollout. The research adapter is not a universal security master.
@@ -128,7 +139,7 @@ The historical evaluator now reports the reason/count for every withheld cutoff,
 
 MAPE remains restricted to positive realized outcomes. A second earnings score is absolute net-income error divided by the trailing-year revenue known at prediction time. It includes zero and negative realized net income, uses the same denominator for model and baseline, and is reported separately from MAPE. Forecasts withheld before the outcome are counted rather than assigned an invented prediction. Revenue has its own positive-outcome eligibility.
 
-A negative quarter reconstructed by subtracting cumulative revenue is withheld as `inconsistent-revenue-basis`; source evidence remains available. In version 2 nothing filled missing quarters or repaired restatements; version 3's one-line reconciliation (above) does so only under its income-statement condition. Directly filed negative revenue still fails the existing positive-revenue guard. Extreme-growth guards remain unchanged pending a verified alternative. Version 3 narrows the SIC exclusion, adds the interest-spread exclusion and the one-line revenue reconciliation in the adapter, and adds the adjacent-quarter share check to the engine. Forecast coefficients are unchanged; see VALIDATION.md, "Version 3 coverage revision".
+A negative quarter reconstructed by subtracting cumulative revenue is withheld as `inconsistent-revenue-basis`; source evidence remains available. In version 2 nothing filled missing quarters or repaired restatements; version 3's one-line reconciliation (above) does so only under its income-statement condition. Directly filed negative revenue still fails the existing positive-revenue guard. Extreme-growth guards remain unchanged pending a verified alternative. Version 3 narrows the SIC exclusion, adds the interest-spread exclusion and the one-line revenue reconciliation in the adapter, and adds the adjacent-quarter share check to the engine. Forecast coefficients are unchanged; see VALIDATION.md, "Version 3 coverage revision". Version 4 changes only the earnings numerator and adds its basis check; see VALIDATION.md, "Version 4 diluted earnings numerator".
 
 The offline `scripts/compare-history.mjs` compares this checkout with a frozen baseline checkout. Supply a JSON manifest of `{ "symbol": "EXAMPLE", "cik": "0000000001" }` rows and raw SEC snapshots named by ten-digit CIK. It deduplicates issuers, excludes all share classes of prior development firms, then sorts by SHA-256 of `forward-v2-validation:` plus padded CIK. The first 30 issuers are development and the next 30 are holdout; choose the split before inspecting outcomes. It reports paired errors for identical cutoffs, horizons, realized outcomes and baselines, both pooled and with equal company weights.
 

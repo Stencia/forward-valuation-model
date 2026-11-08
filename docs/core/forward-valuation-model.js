@@ -1,5 +1,5 @@
 // Research model only. Scenario bounds are sensitivity assumptions, not confidence intervals.
-export const FORWARD_MODEL_VERSION = 'forward-fundamentals-3';
+export const FORWARD_MODEL_VERSION = 'forward-fundamentals-4';
 const DAY = 86400000;
 export const validDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)
   && Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0, 10) === v;
@@ -62,6 +62,18 @@ export function forecastFundamentals({ quarters, asOf, currency, eligibility = {
   // Material non-operating earnings are not silently projected as recurring operating profit.
   if (!earningsReason && recent.some((q) => Math.abs(q.pretaxIncome - q.operatingIncome) / q.revenue > 0.15)) earningsReason = 'material-nonoperating-income';
   if (!earningsReason && recent.some((q) => Math.abs(q.pretaxIncome - q.tax - q.netIncome) / q.revenue > 0.03)) earningsReason = 'common-earnings-reconciliation';
+  // EPS divides net income by diluted shares, so net income must be the diluted-EPS numerator:
+  // dilutive securities can add to it (convertible interest, exchangeable partnership units) or
+  // take from it (a warrant liability's fair-value gain). P/E is withheld when a recent quarter's
+  // net income over diluted shares misses the filer's own diluted EPS by more than cent rounding
+  // and small two-class allocations, or when the filer's diluted numerator departs from basic in
+  // one recent quarter while another stays on basic with no reported EPS to check it against.
+  const epsMismatch = recent.some((q) => finite(q.reportedDilutedEPS)
+    && Math.abs(q.netIncome / q.dilutedShares - q.reportedDilutedEPS) > 0.005 + 0.05 * Math.abs(q.reportedDilutedEPS));
+  const adjusted = recent.some((q) => q.earningsNumerator === 'diluted' && finite(q.basicNetIncome)
+    && Math.abs(q.netIncome - q.basicNetIncome) > 0.05 * Math.abs(q.basicNetIncome));
+  const unchecked = recent.some((q) => q.earningsNumerator === 'basic' && !finite(q.reportedDilutedEPS));
+  if (!earningsReason && (epsMismatch || adjusted && unchecked)) earningsReason = 'diluted-earnings-basis';
   const revenueTTM = sum(recent.map((q) => q.revenue));
   const operatingMargin = !earningsReason ? sum(recent.map((q) => q.operatingIncome)) / revenueTTM : null;
   const nonoperatingMargin = !earningsReason ? median(recent.map((q) => (q.pretaxIncome - q.operatingIncome) / q.revenue)) : null;

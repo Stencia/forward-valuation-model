@@ -1,5 +1,19 @@
 # Historical evaluations
 
+## Version 4 diluted earnings numerator
+
+Evaluation date: November 7, 2026. Baseline: `forward-fundamentals-3`, commit `9710a37`. Candidate: `forward-fundamentals-4`. Inputs: SEC Company Facts and submissions fetched November 7, 2026, cut off at that date, for the 60 issuers of the version 2 split; both versions read the same snapshots. Forecast coefficients are unchanged. Nothing was tuned on these results.
+
+Prompt: TeraWulf's 10-Q for the quarter ended September 30, 2026 reports 709.9M net income available to common shareholders but diluted EPS of -0.03: the diluted numerator removes a 728.4M warrant fair-value gain, leaving -18.5M over 573.6M diluted shares. Version 3 would divide 709.9M by 573.6M (1.24 a share). WULF's P/E was and remains withheld for losses (seven of its eight input quarters on basic earnings, all eight on the diluted numerator), so no WULF estimate changes. The defect is general: on SEC frames for calendar Q2 2026, 588 of 2,338 filers with positive basic earnings and diluted shares tag a diluted numerator, and 71 of those differ from basic by more than 2%. Restaurant Brands (exchangeable partnership units) and TPG run 23% and about 50% below their reported diluted EPS on the basic numerator; Hertz (warrant gain) runs 0.15 against a reported 0.05. Each is withheld today by an unrelated guard.
+
+| Issuer | Version 3 | Version 4 | Cause |
+| --- | --- | --- | --- |
+| WYNN | forward EPS 3.84 | forward EPS 3.59 | Diluted numerator reflects a subsidiary's dilutive securities (Q1 2026: 108.0M against 120.5M basic; 108.0M / 103.8M shares = the reported 1.04) |
+| TSCO | P/E withheld, common-earnings reconciliation | forward EPS 1.92 | Basic net income for the quarter ended December 27, 2025 is the full year (1,096M) under quarter dates; the diluted concept differences to 227.4M, which reconciles to pretax income less tax |
+| ADI | 19 scored earnings windows | 18 | The 2019-08-21 cutoff derives fiscal 2018's fourth quarter from an annual on the old revenue standard less nine months restated to the new one (393M, not 433M); the reported 1.15 EPS exposes it |
+
+Realized earnings outcomes also use the diluted numerator. On windows with identical inputs, outcomes and baselines, errors are identical: development 651 revenue and 202 earnings windows, holdout 669 and 259. In the other scored windows the realized outcome moves by at most 1M (TSCO, TTWO, VLO) and the error is unchanged to four decimals. Among unscored windows, TSCO's 2025 realized outcomes fall from 1.96B to 1.10B, without the mis-tagged full year. The same limits apply as for earlier versions.
+
 ## Version 3 coverage revision
 
 Evaluation date: November 1, 2026. Baseline: `forward-fundamentals-2`, commit `8bcd61e824e1c9ca03d16ce11cc4319fbc7dcb2a`. Candidate: `forward-fundamentals-3`. Inputs: SEC Company Facts and submissions for every issuer, fetched November 1, 2026, cut off at that date; both versions read the same snapshots. Forecast coefficients are unchanged. Nothing was tuned on these results.

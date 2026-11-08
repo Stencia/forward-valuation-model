@@ -4,7 +4,7 @@ A deterministic research model developed for [Utensil Desk](https://utensildesk.
 
 This repository maintains the calculation engine introduced in our forward-valuation research comparisons. It is ordinary JavaScript, with no trained AI weights, runtime dependencies, network requests or provider credentials. The initial release was extracted unchanged from our application; subsequent research improvements are versioned here. See [METHODOLOGY.md](METHODOLOGY.md) for the assumptions, accounting safeguards and offline evaluation commands.
 
-Current research version: **`forward-fundamentals-3`**. Version 2 dampens extrapolated revenue growth by 50%, distinguishes inconsistent revenue reconstruction from reported sales, and includes loss outcomes in historical earnings scoring. Version 3 keeps those coefficients, narrows the financial-industry exclusion to businesses the model cannot represent, reconciles revenue re-filed under a different tag, and withholds P/E when diluted shares jump between adjacent quarters. See [the evaluations](VALIDATION.md).
+Current research version: **`forward-fundamentals-4`**. Version 2 dampens extrapolated revenue growth by 50%, distinguishes inconsistent revenue reconstruction from reported sales, and includes loss outcomes in historical earnings scoring. Version 3 keeps those coefficients, narrows the financial-industry exclusion to businesses the model cannot represent, reconciles revenue re-filed under a different tag, and withholds P/E when diluted shares jump between adjacent quarters. Version 4 divides the filer's diluted-EPS numerator, not basic earnings, by diluted shares, and withholds P/E when a recent quarter's earnings over diluted shares miss the filer's reported diluted EPS. See [the evaluations](VALIDATION.md).
 
 ## Use by Utensil Desk
 
@@ -59,7 +59,7 @@ const valuation = priceForwardForecast(forecast, {
 });
 ```
 
-Supply eight consecutive quarters, with publication dates and consistent currency, units and share basis. Each quarter has `start`, `end`, `knownAt`, `currency`, `revenue`, `operatingIncome`, `pretaxIncome`, `tax`, `netIncome` and `dilutedShares`. Monetary amounts and share counts must use consistent units so EPS is in the quote's per-share currency. Market capitalization must use the same monetary units as revenue. The executable example supplies the complete input shape.
+Supply eight consecutive quarters, with publication dates and consistent currency, units and share basis. Each quarter has `start`, `end`, `knownAt`, `currency`, `revenue`, `operatingIncome`, `pretaxIncome`, `tax`, `netIncome` and `dilutedShares`. Monetary amounts and share counts must use consistent units so EPS is in the quote's per-share currency. Market capitalization must use the same monetary units as revenue. Optional per-quarter `reportedDilutedEPS` (the filer's own diluted EPS), `earningsNumerator` (`'diluted'` or `'basic'`) and `basicNetIncome` let the model check that `netIncome` is the diluted-EPS numerator. The executable example supplies the complete input shape.
 
 Check `status` before reading results. A forecast can retain revenue while withholding EPS, with `earningsReason` explaining why. Low, base and high scenarios are sensitivity assumptions, not confidence intervals. P/E is price divided by projected EPS; P/S is equity market capitalization divided by projected revenue. All outputs retain the input provenance supplied by the caller.
 

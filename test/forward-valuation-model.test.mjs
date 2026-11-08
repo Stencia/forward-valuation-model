@@ -249,3 +249,58 @@ test('a share count that jumps between adjacent quarters withholds P/E even when
   const steady = input(); steady.quarters.forEach((q, i) => { q.dilutedShares = 10 * 1.02 ** i; });
   assert.equal(forecastFundamentals(steady).earningsReason, null);
 });
+
+// TeraWulf's 10-Q for the quarter ended September 30, 2026 (accession 0001628280-26-071671):
+// net income available to common shareholders 709,912,000 (basic EPS 1.42 on 500,068,776
+// shares); diluted EPS removes a 728,442,000 warrant fair-value gain, leaving -18,530,000 over
+// 573,606,743 diluted shares (EPS -0.03).
+// The fixture keeps its own dates; only the figures are TeraWulf's.
+test('the SEC adapter divides the diluted-EPS numerator, not basic earnings, by diluted shares', () => {
+  const raw = rawFacts(); const g = raw.facts['us-gaap'];
+  const Q = { ...g.NetIncomeLoss.units.USD.at(-1) }; delete Q.val;
+  const last = (tag, unit, val) => { g[tag].units[unit].at(-1).val = val; };
+  last('NetIncomeLoss', 'USD', 709_912_000);
+  last('WeightedAverageNumberOfDilutedSharesOutstanding', 'shares', 573_606_743);
+  g.NetIncomeLossAvailableToCommonStockholdersDiluted = { units: { USD: [{ ...Q, val: -18_530_000 }] } };
+  g.EarningsPerShareDiluted = { units: { 'USD/shares': [{ ...Q, val: -0.03 }] } };
+  const input = companyFactsModelInput(raw, '2025-02-01'); const q = input.quarters.at(-1);
+  assert.equal(q.basicNetIncome - q.netIncome, 728_442_000);
+  assert.equal(q.earningsNumerator, 'diluted');
+  assert.equal(Math.round(q.netIncome / q.dilutedShares * 100) / 100, q.reportedDilutedEPS);
+  assert.equal(Math.round(q.basicNetIncome / q.dilutedShares * 100) / 100, 1.24);
+  assert.ok(q.sources.some((s) => s.concept === 'EarningsPerShareDiluted'));
+  const f = forecastFundamentals(input);
+  assert.equal(f.earningsReason, 'nonpositive-earnings');
+  assert.equal(f.scenarios.base.eps, null);
+  // Untagged, on the fixture's own scale with WULF's diluted-to-basic ratio: the reported diluted
+  // EPS still exposes the basic numerator, though every earlier guard passes.
+  const plain = rawFacts(); const p = plain.facts['us-gaap'];
+  const basic = p.NetIncomeLoss.units.USD.at(-1).val;
+  p.EarningsPerShareDiluted = { units: { 'USD/shares': [{ ...Q, val: Math.round(basic * -18_530_000 / 709_912_000 / 10 * 100) / 100 }] } };
+  assert.equal(forecastFundamentals(companyFactsModelInput(rawFacts(), '2025-02-01')).earningsReason, null);
+  const untagged = companyFactsModelInput(plain, '2025-02-01');
+  assert.equal(untagged.quarters.at(-1).earningsNumerator, 'basic');
+  assert.equal(forecastFundamentals(untagged).earningsReason, 'diluted-earnings-basis');
+});
+test('a warrant gain below the non-operating threshold no longer lifts forward EPS', () => {
+  const x = input(); const q = x.quarters.at(-1); const gain = q.revenue * 0.1;
+  q.reportedDilutedEPS = q.netIncome / q.dilutedShares;
+  q.pretaxIncome += gain; q.netIncome += gain;
+  assert.equal(forecastFundamentals(x).earningsReason, 'diluted-earnings-basis');
+  // Cent rounding and small two-class allocations are not a different basis.
+  const rounded = input(); rounded.quarters.at(-1).reportedDilutedEPS = Math.round(rounded.quarters.at(-1).netIncome / 10 * 100) / 100 - 0.03;
+  assert.equal(forecastFundamentals(rounded).earningsReason, null);
+});
+test('exchangeable units use the diluted numerator; a basic quarter with nothing to check it withholds P/E', () => {
+  const units = () => { const x = input(); for (const q of x.quarters) {
+    q.basicNetIncome = q.netIncome * 0.77; q.earningsNumerator = 'diluted';
+    q.pretaxIncome = q.netIncome + q.tax; q.reportedDilutedEPS = q.netIncome / q.dilutedShares; } return x; };
+  const consistent = forecastFundamentals(units());
+  assert.equal(consistent.earningsReason, null);
+  assert.ok(Math.abs(consistent.baselines.eps - units().quarters.slice(-4).reduce((a, q) => a + q.netIncome / 10, 0)) < 1e-9);
+  const unchecked = units(); const u = unchecked.quarters.at(-1);
+  Object.assign(u, { earningsNumerator: 'basic', reportedDilutedEPS: null });
+  assert.equal(forecastFundamentals(unchecked).earningsReason, 'diluted-earnings-basis');
+  const checked = units(); Object.assign(checked.quarters.at(-1), { earningsNumerator: 'basic' });
+  assert.equal(forecastFundamentals(checked).earningsReason, null);
+});
