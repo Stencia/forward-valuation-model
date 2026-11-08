@@ -83,26 +83,29 @@ forecasts and guidance fiscal-period conversion are outside this first research 
 - Net income is the diluted-EPS numerator (version 4), because EPS divides it by diluted shares.
   Dilutive securities move that numerator away from basic earnings: convertible interest and
   exchangeable partnership units add to it, a warrant liability's fair-value gain is removed from
-  it. The adapter considers `NetIncomeLossAvailableToCommonStockholdersDiluted` and
-  `NetIncomeLossAttributableToParentDiluted` (a subsidiary's dilutive securities) only where filed
-  for the quarter itself: antidilution is tested period by period, so a fourth quarter differenced
-  from a year and nine months on different dilution is not the quarter's numerator. Where the
-  filer reports the quarter's diluted EPS (from the filing that supplied the share count when it
-  has one), the first numerator that reproduces it is used, basic included, which sets aside an
+  it. The adapter reads `NetIncomeLossAvailableToCommonStockholdersDiluted` and
+  `NetIncomeLossAttributableToParentDiluted` (a subsidiary's dilutive securities), each resolved
+  on its own. Where the filer reports the quarter's diluted EPS (from the filing that supplied the
+  share count; for a share count derived from a year and nine months, only from the annual's
+  filing), the first numerator that reproduces it is used, basic included, which sets aside an
   adjustment or sign-flipped figure filed under the diluted concept. Without a reported EPS, a
-  diluted figure of the other sign or more than 50% from basic is not used. The reported EPS is
-  evidence for the check only and does not move the quarter's `knownAt`.
+  diluted figure filed for the quarter is used unless it is more than 50% from basic. A diluted
+  figure differenced from a year and nine months is used only when each of those periods
+  reproduces its own reported diluted EPS and both are adjusted from basic in the same direction
+  or neither is: antidilution is tested period by period, so a year on which the securities were
+  antidilutive cannot be netted against nine months on which they were dilutive. A diluted figure
+  that is filed but fails these tests leaves the quarter `unconfirmed` on basic earnings. The
+  reported EPS is evidence for the check only and does not move the quarter's `knownAt`.
 - The 3% common-earnings reconciliation now compares post-tax income with the numerator chosen
   above, so it also bounds a diluted adjustment that the median projection would otherwise carry.
   A diluted value that is itself bad surfaces under the existing reasons (`nonpositive-earnings`,
   `common-earnings-reconciliation`). After those guards, P/E is withheld as
   `diluted-earnings-basis` when a recent quarter's net income over diluted shares misses the
   filer's reported diluted EPS by more than half a cent plus 5% (cent rounding and small two-class
-  allocations), or when a recent quarter's diluted numerator departs from basic by more than 5%
-  while another recent quarter is on basic with no reported EPS to check it. Consequently a
-  filer that is dilution-adjusted every quarter is withheld, since its fourth quarter is derived.
-  Not detected: an adjustment in a fourth quarter of a filer that tags none, which has no
-  directly reported quarterly EPS.
+  allocations), when a recent quarter is `unconfirmed`, or when a recent quarter's diluted
+  numerator departs from basic by more than 5% while another recent quarter is on basic with no
+  reported EPS to check it. Not detected: an adjustment in a fourth quarter of a filer that tags
+  no diluted numerator, since no quarterly fourth-quarter EPS is filed.
 - Ordinary equity/share basis must be verified by the caller. ADR conversion, complex capital
   structures, subsequent splits and corporate actions require the existing production share-basis
   resolver before any rollout. The research adapter is not a universal security master.

@@ -87,18 +87,45 @@ function sharesFor(facts, q) {
   return value > 0 ? { value, sources: [evidence(year), evidence(prior)], method: 'weighted-share-days' } : null;
 }
 
-// Per-share figures are not additive flows either: only a directly reported quarter is used, from
-// the filing that supplied the share count when it reports one (a later filing can restate EPS
-// for a split the share count predates).
-function dilutedEpsFor(facts, q, accession) {
-  for (const tag of DILUTED_EPS) {
-    const points = (facts['us-gaap']?.[tag]?.units?.['USD/shares'] || [])
-      .filter((p) => /^10-[QK](\/A)?$/.test(p.form) && Number.isFinite(p.val) && p.start === q.start && p.end === q.end);
-    const p = points.find((p) => accession && p.accn === accession) || newest(points);
-    if (p) return { value: p.val, source: { accession: p.accn, filedAt: p.filed, concept: tag, unit: 'USD/shares',
-      start: p.start, end: p.end, value: p.val } };
+// One filed figure for exactly this period from the first concept that has one: the given filing's
+// across all concepts first, otherwise (unless strict) the newest of the first concept filed.
+function filedFor(facts, concepts, unit, period, accession, strict = false) {
+  const byConcept = concepts.map((tag) => [tag, (facts['us-gaap']?.[tag]?.units?.[unit] || [])
+    .filter((p) => /^10-[QK](\/A)?$/.test(p.form || '') && Number.isFinite(p.val) && p.start === period.start && p.end === period.end)]);
+  for (const [tag, points] of byConcept) {
+    const p = accession && points.find((p) => p.accn === accession);
+    if (p) return { tag, p };
   }
+  if (strict) return null;
+  for (const [tag, points] of byConcept) if (points.length) return { tag, p: newest(points) };
   return null;
+}
+// Per-share figures are not additive flows either: only a directly reported period is used, from
+// the filing that supplied the share count (a later filing can restate EPS for a split the share
+// count predates). A share count derived from a year and nine months takes EPS only from the
+// annual's filing.
+function dilutedEpsFor(facts, q, shares) {
+  const derived = shares?.method === 'weighted-share-days';
+  const found = filedFor(facts, DILUTED_EPS, 'USD/shares', q, shares?.sources[0]?.accession, derived);
+  return found && { value: found.p.val, source: { accession: found.p.accn, filedAt: found.p.filed, concept: found.tag,
+    unit: 'USD/shares', start: found.p.start, end: found.p.end, value: found.p.val } };
+}
+const BASIC_NET = METRICS.netIncome.map(([, tag]) => tag);
+// A diluted numerator differenced from filed periods (a year less nine months) stands only when
+// every figure in it reproduces its own period's reported diluted EPS over that period's diluted
+// shares, and all are adjusted from basic in the same direction or none is: antidilution is tested
+// per period, so a year on which the securities were antidilutive cannot be netted against nine
+// months on which they were dilutive.
+function confirmedDerivation(facts, q) {
+  const modes = (q.origin?.terms || []).map(({ origin: o }) => {
+    const period = { start: o.start, end: o.end };
+    const basic = filedFor(facts, BASIC_NET, 'USD', period, o.accession)?.p.val;
+    const shares = filedFor(facts, ['WeightedAverageNumberOfDilutedSharesOutstanding'], 'shares', period, o.accession)?.p.val;
+    const eps = filedFor(facts, DILUTED_EPS, 'USD/shares', period, o.accession)?.p.val;
+    if (!Number.isFinite(basic) || !matchesReportedEps(o.value, shares, eps)) return NaN;
+    return Math.abs(o.value - basic) <= 0.01 * Math.abs(basic) ? 0 : Math.sign(o.value - basic);
+  });
+  return modes.length > 0 && modes.every((m) => m === modes[0]);
 }
 
 // Revenue figures one filer tags under different candidate concepts can be one line on one basis:
@@ -190,7 +217,7 @@ export function companyFactsModelInput(raw, asOf) {
   // Antidilution is tested period by period (ASC 260), so a diluted numerator is not additive: a
   // fourth quarter differenced from a year and nine months on different dilution can be far from
   // the quarter's own. Only directly filed quarters are used.
-  const dilutedSeries = DILUTED_NUMERATORS.map((tag) => resolve(tags([tag])).filter((p) => !p.derived));
+  const dilutedSeries = DILUTED_NUMERATORS.map((tag) => resolve(tags([tag])));
   const revenues = withReconciledRevenue(resolve(revenueTags), reconciledRevenueQuarters(facts, revenueTags));
   const quarters = revenues.map((r) => {
     const sources = [...origins(r)];
@@ -208,23 +235,34 @@ export function companyFactsModelInput(raw, asOf) {
     const shares = sharesFor(facts, r);
     row.dilutedShares = shares?.value ?? null;
     sources.push(...(shares?.sources || []));
-    const eps = dilutedEpsFor(facts, r, shares?.sources.length === 1 ? shares.sources[0].accession : null);
+    const eps = dilutedEpsFor(facts, r, shares);
     row.reportedDilutedEPS = eps?.value ?? null;
     // Earnings are divided by diluted shares, so the filer's diluted numerator is preferred. With
-    // a reported diluted EPS, the first numerator that reproduces it is used (some filers tag the
-    // adjustment, or flip its sign, under the diluted concept). Without one, a diluted figure of
-    // the other sign or more than 50% from basic is not trusted.
+    // a reported diluted EPS, the first numerator that reproduces it is used, basic included (some
+    // filers tag the adjustment, or flip its sign, under the diluted concept). Without one, a filed
+    // diluted figure more than 50% from basic, or a differenced one that its filed periods do not
+    // confirm, leaves the quarter unconfirmed rather than silently on basic.
     const basic = row.netIncome;
     const candidates = dilutedSeries.map((points) => points.find((p) => p.start === r.start && p.end === r.end))
       .filter((p) => Number.isFinite(p?.val));
-    const plausible = (v) => !Number.isFinite(basic) || Math.sign(v) === Math.sign(basic) && Math.abs(v - basic) <= 0.5 * Math.abs(basic);
-    const chosen = eps
-      ? candidates.find((p) => matchesReportedEps(p.val, row.dilutedShares, eps.value))
-        ?? (matchesReportedEps(basic, row.dilutedShares, eps.value) ? null : candidates[0])
-      : candidates.find((p) => plausible(p.val));
+    const direct = candidates.filter((p) => !p.derived);
+    const plausible = (v) => !Number.isFinite(basic) || Math.abs(v - basic) <= 0.5 * Math.abs(basic);
+    const near = (v) => Number.isFinite(basic) && Math.abs(v - basic) <= 0.01 * Math.abs(basic);
+    let chosen = null; let numerator = 'basic';
+    if (eps) {
+      chosen = candidates.find((p) => matchesReportedEps(p.val, row.dilutedShares, eps.value))
+        ?? (matchesReportedEps(basic, row.dilutedShares, eps.value) ? null : direct[0] ?? null);
+    } else if (direct.length) {
+      chosen = direct.find((p) => plausible(p.val)) ?? null;
+      if (!chosen) numerator = 'unconfirmed';
+    } else if (candidates.length) {
+      chosen = candidates.find((p) => plausible(p.val) && confirmedDerivation(facts, p)) ?? null;
+      if (!chosen && !candidates.every((p) => near(p.val))) numerator = 'unconfirmed';
+    }
+    if (chosen) numerator = 'diluted';
     row.basicNetIncome = basic;
     if (chosen) { row.netIncome = chosen.val; sources.push(...origins(chosen)); }
-    row.earningsNumerator = chosen ? 'diluted' : 'basic';
+    row.earningsNumerator = numerator;
     // The EPS is evidence for the check only; a later filing repeating it does not date the quarter.
     row.knownAt = sources.map((s) => s.filedAt).sort().at(-1);
     if (eps) sources.push(eps.source);

@@ -77,7 +77,9 @@ export function forecastFundamentals({ quarters, asOf, currency, eligibility = {
   const adjusted = recent.some((q) => q.earningsNumerator === 'diluted' && finite(q.basicNetIncome)
     && Math.abs(q.netIncome - q.basicNetIncome) > 0.05 * Math.abs(q.basicNetIncome));
   const unchecked = recent.some((q) => q.earningsNumerator === 'basic' && !finite(q.reportedDilutedEPS));
-  if (!earningsReason && (epsMismatch || adjusted && unchecked)) earningsReason = 'diluted-earnings-basis';
+  // 'unconfirmed': the filer's diluted numerator exists but could not be confirmed for the quarter.
+  const unconfirmed = recent.some((q) => q.earningsNumerator === 'unconfirmed');
+  if (!earningsReason && (epsMismatch || unconfirmed || adjusted && unchecked)) earningsReason = 'diluted-earnings-basis';
   const revenueTTM = sum(recent.map((q) => q.revenue));
   const operatingMargin = !earningsReason ? sum(recent.map((q) => q.operatingIncome)) / revenueTTM : null;
   const nonoperatingMargin = !earningsReason ? median(recent.map((q) => (q.pretaxIncome - q.operatingIncome) / q.revenue)) : null;

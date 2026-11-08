@@ -332,24 +332,62 @@ test('exchangeable units use the diluted numerator; a basic quarter with nothing
   const dilutedNoEps = units(); dilutedNoEps.quarters.at(-1).reportedDilutedEPS = null;
   assert.equal(forecastFundamentals(dilutedNoEps).earningsReason, null);
 });
-test('the adapter trusts a diluted numerator only when filed for the quarter and consistent with its EPS', () => {
-  // A fourth quarter differenced from a year and nine months is not the quarter's diluted numerator.
-  const derived = rawFacts(); const net = lastPoint(derived, 'NetIncomeLoss').val;
-  derived.facts['us-gaap'].NetIncomeLossAvailableToCommonStockholdersDiluted = { units: { USD: [
-    { start: '2024-01-01', end: '2024-09-30', filed: '2024-10-25', val: 400, form: '10-Q', accn: 'ytd' },
-    { start: '2024-01-01', end: '2024-12-31', filed: '2025-01-25', val: 400 + net * 1.2, form: '10-K', accn: 'annual' }] } };
-  assert.equal(companyFactsModelInput(derived, '2025-02-01').quarters.at(-1).earningsNumerator, 'basic');
+// A fourth quarter differenced from filed nine-month and annual figures, with each period's basic
+// earnings, diluted shares and (optionally) diluted EPS filed beside it.
+function differencedQ4({ nine, annual, eps = true, q4Eps = null }) {
+  const raw = rawFacts(); const g = raw.facts['us-gaap'];
+  const quarters = g.NetIncomeLoss.units.USD.slice(-4).map((p) => p.val);
+  const q4 = { ...lastPoint(raw, 'NetIncomeLoss') };
+  const periods = [['ytd', '2024-01-01', '2024-09-30', '2024-10-25', '10-Q', quarters.slice(0, 3)],
+    ['annual', '2024-01-01', '2024-12-31', '2025-01-25', '10-K', quarters]];
+  const at = (accn, start, end, filed, form, val) => ({ accn, start, end, filed, form, val });
+  g.NetIncomeLossAvailableToCommonStockholdersDiluted = { units: { USD: [] } };
+  g.EarningsPerShareDiluted = { units: { 'USD/shares': [] } };
+  for (const [[accn, start, end, filed, form, qs], factor] of periods.map((p, i) => [p, [nine, annual][i]])) {
+    const basic = qs.reduce((a, b) => a + b, 0);
+    g.NetIncomeLoss.units.USD.push(at(accn, start, end, filed, form, basic));
+    g.WeightedAverageNumberOfDilutedSharesOutstanding.units.shares.push(at(accn, start, end, filed, form, 10));
+    g.NetIncomeLossAvailableToCommonStockholdersDiluted.units.USD.push(at(accn, start, end, filed, form, basic * factor));
+    if (eps) g.EarningsPerShareDiluted.units['USD/shares'].push(at(accn, start, end, filed, form, Math.round(basic * factor / 10 * 100) / 100));
+  }
+  if (q4Eps != null) g.EarningsPerShareDiluted.units['USD/shares'].push({ ...q4, val: q4Eps });
+  return companyFactsModelInput(raw, '2025-02-01').quarters.at(-1);
+}
+test('a differenced fourth-quarter diluted numerator stands only when its filed periods confirm it', () => {
+  const confirmed = differencedQ4({ nine: 1.2, annual: 1.2 });
+  assert.equal(confirmed.earningsNumerator, 'diluted');
+  assert.ok(Math.abs(confirmed.netIncome / confirmed.basicNetIncome - 1.2) < 1e-9);
+  // Blackstone 2017: dilutive for nine months, antidilutive for the year.
+  assert.equal(differencedQ4({ nine: 1.02, annual: 1 }).earningsNumerator, 'unconfirmed');
+  assert.equal(differencedQ4({ nine: 1.2, annual: 1.2, eps: false }).earningsNumerator, 'unconfirmed');
+  // No dilution in either period: the differenced figure is basic within rounding.
+  assert.equal(differencedQ4({ nine: 1, annual: 1, eps: false }).earningsNumerator, 'basic');
+  // A reported fourth-quarter EPS confirms a differenced figure on its own.
+  const q = differencedQ4({ nine: 1.2, annual: 1.2, eps: false, q4Eps: Math.round(31.68 * 1.2 / 10 * 100) / 100 });
+  assert.equal(q.earningsNumerator, 'diluted');
+});
+test('a filed diluted numerator that cannot be confirmed withholds P/E instead of falling back to basic', () => {
+  const raw = rawFacts(); const net = lastPoint(raw, 'NetIncomeLoss').val;
   // The adjustment tagged as the numerator: the reported EPS selects basic earnings instead.
   const adjustment = rawFacts(); const a = adjustment.facts['us-gaap'];
   a.NetIncomeLossAvailableToCommonStockholdersDiluted = { units: { USD: [filedLike(adjustment, -4.7)] } };
   a.EarningsPerShareDiluted = { units: { 'USD/shares': [filedLike(adjustment, Math.round(net / 10 * 100) / 100)] } };
   const qa = companyFactsModelInput(adjustment, '2025-02-01').quarters.at(-1);
   assert.equal(qa.earningsNumerator, 'basic'); assert.equal(qa.netIncome, net);
-  // A sign-flipped figure with no EPS to confirm it is not trusted; a plausible one is.
-  for (const [val, basis] of [[-net, 'basic'], [net * 1.6, 'basic'], [net * 1.2, 'diluted']]) {
-    const raw = rawFacts();
-    raw.facts['us-gaap'].NetIncomeLossAttributableToParentDiluted = { units: { USD: [filedLike(raw, val)] } };
-    assert.equal(companyFactsModelInput(raw, '2025-02-01').quarters.at(-1).earningsNumerator, basis);
+  // Neither figure reproduces the EPS: the filed diluted figure is kept and the check withholds.
+  a.EarningsPerShareDiluted.units['USD/shares'][0].val = 1;
+  const neither = companyFactsModelInput(adjustment, '2025-02-01');
+  assert.equal(neither.quarters.at(-1).netIncome, -4.7);
+  // Without EPS: a sign flip or a figure more than 50% off is unconfirmed; a plausible one is used.
+  for (const [val, basis] of [[-net, 'unconfirmed'], [net * 1.6, 'unconfirmed'], [net * 0.4, 'unconfirmed'], [net * 1.2, 'diluted']]) {
+    const r = rawFacts();
+    r.facts['us-gaap'].NetIncomeLossAttributableToParentDiluted = { units: { USD: [filedLike(r, val)] } };
+    const input = companyFactsModelInput(r, '2025-02-01');
+    assert.equal(input.quarters.at(-1).earningsNumerator, basis);
+    if (basis === 'unconfirmed') {
+      assert.equal(input.quarters.at(-1).netIncome, net);
+      assert.equal(forecastFundamentals(input).earningsReason, 'diluted-earnings-basis');
+    }
   }
 });
 test('reported EPS comes from the share count filing and never dates the quarter', () => {
@@ -364,3 +402,17 @@ test('reported EPS comes from the share count filing and never dates the quarter
   later.facts['us-gaap'].EarningsPerShareDiluted = { units: { 'USD/shares': [{ ...filedLike(later, own), filed: '2025-01-30', accn: 'later' }] } };
   assert.equal(companyFactsModelInput(later, '2025-02-01').quarters.at(-1).knownAt, q.knownAt);
 });
+test('a derived share count takes EPS only from the annual filing it came from', () => {
+  const derivedShares = (epsPoint) => {
+    const raw = rawFacts(); const g = raw.facts['us-gaap']; const q4 = { ...lastPoint(raw, 'NetIncomeLoss') };
+    const shares = g.WeightedAverageNumberOfDilutedSharesOutstanding.units.shares; shares.pop();
+    shares.push({ start: '2024-01-01', end: '2024-09-30', filed: '2024-10-25', val: 10, form: '10-Q', accn: 'ytd' },
+      { start: '2024-01-01', end: '2024-12-31', filed: '2025-01-25', val: 10, form: '10-K', accn: 'annual' });
+    g.EarningsPerShareDiluted = { units: { 'USD/shares': [{ ...q4, ...epsPoint }] } };
+    return companyFactsModelInput(raw, '2025-02-01').quarters.at(-1).reportedDilutedEPS;
+  };
+  // DECK: a later filing restates the quarter's EPS for a split the annual share count predates.
+  assert.equal(derivedShares({ val: 0.53, accn: 'post-split', filed: '2025-01-30' }), null);
+  assert.equal(derivedShares({ val: 3.17, accn: 'annual', form: '10-K' }), 3.17);
+});
+
