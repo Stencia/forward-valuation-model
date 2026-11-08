@@ -1,5 +1,5 @@
 // Research model only. Scenario bounds are sensitivity assumptions, not confidence intervals.
-export const FORWARD_MODEL_VERSION = 'forward-fundamentals-3';
+export const FORWARD_MODEL_VERSION = 'forward-fundamentals-4';
 const DAY = 86400000;
 export const validDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)
   && Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0, 10) === v;
@@ -9,6 +9,10 @@ const sum = (xs) => xs.reduce((a, b) => a + b, 0);
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); const n = s.length; return n % 2 ? s[n >> 1] : (s[n / 2 - 1] + s[n / 2]) / 2; };
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const finite = (v) => typeof v === 'number' && Number.isFinite(v);
+// Net income over diluted shares agrees with a filed diluted EPS within cent rounding and small
+// two-class allocations (half a cent plus 5%).
+export const matchesReportedEps = (net, shares, eps) => finite(net) && finite(shares) && shares > 0 && finite(eps)
+  && Math.abs(net / shares - eps) <= 0.005 + 0.05 * Math.abs(eps);
 
 // Inputs are eight consecutive, point-in-time quarters on one currency/share basis.
 // The caller resolves filings and corporate actions before invoking this price-free function.
@@ -62,6 +66,20 @@ export function forecastFundamentals({ quarters, asOf, currency, eligibility = {
   // Material non-operating earnings are not silently projected as recurring operating profit.
   if (!earningsReason && recent.some((q) => Math.abs(q.pretaxIncome - q.operatingIncome) / q.revenue > 0.15)) earningsReason = 'material-nonoperating-income';
   if (!earningsReason && recent.some((q) => Math.abs(q.pretaxIncome - q.tax - q.netIncome) / q.revenue > 0.03)) earningsReason = 'common-earnings-reconciliation';
+  // EPS divides net income by diluted shares, so net income must be the diluted-EPS numerator:
+  // dilutive securities can add to it (convertible interest, exchangeable partnership units) or
+  // take from it (a warrant liability's fair-value gain). P/E is withheld when a recent quarter's
+  // net income over diluted shares misses the filer's own diluted EPS by more than cent rounding
+  // and small two-class allocations, or when the filer's diluted numerator departs from basic in
+  // one recent quarter while another stays on basic with no reported EPS to check it against.
+  const epsMismatch = recent.some((q) => finite(q.reportedDilutedEPS)
+    && !matchesReportedEps(q.netIncome, q.dilutedShares, q.reportedDilutedEPS));
+  const adjusted = recent.some((q) => q.earningsNumerator === 'diluted' && finite(q.basicNetIncome)
+    && Math.abs(q.netIncome - q.basicNetIncome) > 0.05 * Math.abs(q.basicNetIncome));
+  const unchecked = recent.some((q) => q.earningsNumerator === 'basic' && !finite(q.reportedDilutedEPS));
+  // 'unconfirmed': the filer's diluted numerator exists but could not be confirmed for the quarter.
+  const unconfirmed = recent.some((q) => q.earningsNumerator === 'unconfirmed');
+  if (!earningsReason && (epsMismatch || unconfirmed || adjusted && unchecked)) earningsReason = 'diluted-earnings-basis';
   const revenueTTM = sum(recent.map((q) => q.revenue));
   const operatingMargin = !earningsReason ? sum(recent.map((q) => q.operatingIncome)) / revenueTTM : null;
   const nonoperatingMargin = !earningsReason ? median(recent.map((q) => (q.pretaxIncome - q.operatingIncome) / q.revenue)) : null;

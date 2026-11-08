@@ -1,7 +1,7 @@
 // SEC adapter for the research model. Filter publication dates BEFORE selecting/reconstructing quarters.
 import { operatingQuarterSeries } from './sec-operating-quarters.mjs';
 import { partialRevenueConcepts, withPartialRevenueLast } from './sec-revenue-components.mjs';
-import { daysBetween, validDate } from '../docs/core/forward-valuation-model.js';
+import { daysBetween, matchesReportedEps, validDate } from '../docs/core/forward-valuation-model.js';
 const tags = (names) => names.map((n) => ['us-gaap', n]);
 const REVENUE = tags(['RevenueFromContractWithCustomerExcludingAssessedTax', 'Revenues', 'SalesRevenueNet',
   'RevenueFromContractWithCustomerIncludingAssessedTax']);
@@ -12,6 +12,11 @@ const METRICS = {
   tax: tags(['IncomeTaxExpenseBenefit']),
   netIncome: tags(['NetIncomeLossAvailableToCommonStockholdersBasic', 'NetIncomeLoss']),
 };
+// The diluted-EPS numerator: basic earnings after the filer's own dilutive-security adjustments,
+// including a subsidiary's dilutive securities (Wynn Resorts tags only the second concept). Each
+// concept is resolved on its own, so neither displaces the other by filing date.
+const DILUTED_NUMERATORS = ['NetIncomeLossAvailableToCommonStockholdersDiluted', 'NetIncomeLossAttributableToParentDiluted'];
+const DILUTED_EPS = ['EarningsPerShareDiluted', 'EarningsPerShareBasicAndDiluted'];
 // SEC SIC codes whose reported figures do not fit this model's revenue x operating-margin bridge.
 // Only these are excluded; the rest of Division H (60-67) faces the same per-company guards as any
 // other filer. Finance services (6199: card networks, payment and crypto-mining/compute firms),
@@ -80,6 +85,47 @@ function sharesFor(facts, q) {
   const value = (year.val * (daysBetween(year.start, year.end) + 1) - prior.val * (daysBetween(prior.start, prior.end) + 1))
     / (daysBetween(q.start, q.end) + 1);
   return value > 0 ? { value, sources: [evidence(year), evidence(prior)], method: 'weighted-share-days' } : null;
+}
+
+// One filed figure for exactly this period from the first concept that has one: the given filing's
+// across all concepts first, otherwise (unless strict) the newest of the first concept filed.
+function filedFor(facts, concepts, unit, period, accession, strict = false) {
+  const byConcept = concepts.map((tag) => [tag, (facts['us-gaap']?.[tag]?.units?.[unit] || [])
+    .filter((p) => /^10-[QK](\/A)?$/.test(p.form || '') && Number.isFinite(p.val) && p.start === period.start && p.end === period.end)]);
+  for (const [tag, points] of byConcept) {
+    const p = accession && points.find((p) => p.accn === accession);
+    if (p) return { tag, p };
+  }
+  if (strict) return null;
+  for (const [tag, points] of byConcept) if (points.length) return { tag, p: newest(points) };
+  return null;
+}
+// Per-share figures are not additive flows either: only a directly reported period is used, from
+// the filing that supplied the share count (a later filing can restate EPS for a split the share
+// count predates). A share count derived from a year and nine months takes EPS only from the
+// annual's filing.
+function dilutedEpsFor(facts, q, shares) {
+  const derived = shares?.method === 'weighted-share-days';
+  const found = filedFor(facts, DILUTED_EPS, 'USD/shares', q, shares?.sources[0]?.accession, derived);
+  return found && { value: found.p.val, source: { accession: found.p.accn, filedAt: found.p.filed, concept: found.tag,
+    unit: 'USD/shares', start: found.p.start, end: found.p.end, value: found.p.val } };
+}
+const BASIC_NET = METRICS.netIncome.map(([, tag]) => tag);
+// A diluted numerator differenced from filed periods (a year less nine months) stands only when
+// every figure in it reproduces its own period's reported diluted EPS over that period's diluted
+// shares, and all are adjusted from basic in the same direction or none is: antidilution is tested
+// per period, so a year on which the securities were antidilutive cannot be netted against nine
+// months on which they were dilutive.
+function confirmedDerivation(facts, q) {
+  const modes = (q.origin?.terms || []).map(({ origin: o }) => {
+    const period = { start: o.start, end: o.end };
+    const basic = filedFor(facts, BASIC_NET, 'USD', period, o.accession)?.p.val;
+    const shares = filedFor(facts, ['WeightedAverageNumberOfDilutedSharesOutstanding'], 'shares', period, o.accession)?.p.val;
+    const eps = filedFor(facts, DILUTED_EPS, 'USD/shares', period, o.accession)?.p.val;
+    if (!Number.isFinite(basic) || !matchesReportedEps(o.value, shares, eps)) return NaN;
+    return Math.abs(o.value - basic) <= 0.01 * Math.abs(basic) ? 0 : Math.sign(o.value - basic);
+  });
+  return modes.length > 0 && modes.every((m) => m === modes[0]);
 }
 
 // Revenue figures one filer tags under different candidate concepts can be one line on one basis:
@@ -168,6 +214,10 @@ export function companyFactsModelInput(raw, asOf) {
   const revenueTags = withPartialRevenueLast(REVENUE, partialRevenueConcepts(facts, REVENUE));
   const resolve = (candidates) => operatingQuarterSeries(facts, candidates, 'USD', { depth: 100 });
   const series = Object.fromEntries(Object.entries(METRICS).map(([key, cs]) => [key, resolve(cs)]));
+  // Antidilution is tested period by period (ASC 260), so a diluted numerator is not additive: a
+  // fourth quarter differenced from a year and nine months on different dilution can be far from
+  // the quarter's own. Only directly filed quarters are used.
+  const dilutedSeries = DILUTED_NUMERATORS.map((tag) => resolve(tags([tag])));
   const revenues = withReconciledRevenue(resolve(revenueTags), reconciledRevenueQuarters(facts, revenueTags));
   const quarters = revenues.map((r) => {
     const sources = [...origins(r)];
@@ -185,8 +235,38 @@ export function companyFactsModelInput(raw, asOf) {
     const shares = sharesFor(facts, r);
     row.dilutedShares = shares?.value ?? null;
     sources.push(...(shares?.sources || []));
-    row.sources = sources;
+    const eps = dilutedEpsFor(facts, r, shares);
+    row.reportedDilutedEPS = eps?.value ?? null;
+    // Earnings are divided by diluted shares, so the filer's diluted numerator is preferred. With
+    // a reported diluted EPS, the first numerator that reproduces it is used, basic included (some
+    // filers tag the adjustment, or flip its sign, under the diluted concept). Without one, a filed
+    // diluted figure more than 50% from basic, or a differenced one that its filed periods do not
+    // confirm, leaves the quarter unconfirmed rather than silently on basic.
+    const basic = row.netIncome;
+    const candidates = dilutedSeries.map((points) => points.find((p) => p.start === r.start && p.end === r.end))
+      .filter((p) => Number.isFinite(p?.val));
+    const direct = candidates.filter((p) => !p.derived);
+    const plausible = (v) => !Number.isFinite(basic) || Math.abs(v - basic) <= 0.5 * Math.abs(basic);
+    const near = (v) => Number.isFinite(basic) && Math.abs(v - basic) <= 0.01 * Math.abs(basic);
+    let chosen = null; let numerator = 'basic';
+    if (eps) {
+      chosen = candidates.find((p) => matchesReportedEps(p.val, row.dilutedShares, eps.value))
+        ?? (matchesReportedEps(basic, row.dilutedShares, eps.value) ? null : direct[0] ?? null);
+    } else if (direct.length) {
+      chosen = direct.find((p) => plausible(p.val)) ?? null;
+      if (!chosen) numerator = 'unconfirmed';
+    } else if (candidates.length) {
+      chosen = candidates.find((p) => plausible(p.val) && confirmedDerivation(facts, p)) ?? null;
+      if (!chosen && !candidates.every((p) => near(p.val))) numerator = 'unconfirmed';
+    }
+    if (chosen) numerator = 'diluted';
+    row.basicNetIncome = basic;
+    if (chosen) { row.netIncome = chosen.val; sources.push(...origins(chosen)); }
+    row.earningsNumerator = numerator;
+    // The EPS is evidence for the check only; a later filing repeating it does not date the quarter.
     row.knownAt = sources.map((s) => s.filedAt).sort().at(-1);
+    if (eps) sources.push(eps.source);
+    row.sources = sources;
     return row;
   });
   const sic = Number(raw.sic);

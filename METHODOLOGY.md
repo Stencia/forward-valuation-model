@@ -80,6 +80,34 @@ forecasts and guidance fiscal-period conversion are outside this first research 
   are all on the new basis), negative
   or above-60% recent effective taxes, non-operating income above 15% of quarterly revenue, and
   common-earnings reconciliation above 3% of revenue withhold P/E. Revenue can remain available.
+- Net income is the diluted-EPS numerator (version 4), because EPS divides it by diluted shares.
+  Dilutive securities move that numerator away from basic earnings: convertible interest and
+  exchangeable partnership units add to it, a warrant liability's fair-value gain is removed from
+  it. The adapter reads `NetIncomeLossAvailableToCommonStockholdersDiluted` and
+  `NetIncomeLossAttributableToParentDiluted` (a subsidiary's dilutive securities), each resolved
+  on its own. Where the filer reports the quarter's diluted EPS (from the filing that supplied the
+  share count; for a share count derived from a year and nine months, only from the annual's
+  filing), the first numerator that reproduces it is used, basic included, which sets aside an
+  adjustment or sign-flipped figure filed under the diluted concept. Without a reported EPS, a
+  diluted figure filed for the quarter is used unless it is more than 50% from basic. A diluted
+  figure differenced from a year and nine months is used only when each of those periods
+  reproduces its own reported diluted EPS and both are adjusted from basic in the same direction
+  or neither is: antidilution is tested period by period, so a year on which the securities were
+  antidilutive cannot be netted against nine months on which they were dilutive. A diluted figure
+  that is filed but fails these tests leaves the quarter `unconfirmed` on basic earnings. The
+  reported EPS is evidence for the check only and does not move the quarter's `knownAt`.
+- The 3% common-earnings reconciliation now compares post-tax income with the numerator chosen
+  above, so it also bounds a diluted adjustment that the median projection would otherwise carry.
+  A diluted value that is itself bad surfaces under the existing reasons (`nonpositive-earnings`,
+  `common-earnings-reconciliation`). After those guards, P/E is withheld as
+  `diluted-earnings-basis` when a recent quarter's net income over diluted shares misses the
+  filer's reported diluted EPS by more than half a cent plus 5% (cent rounding and small two-class
+  allocations), when a recent quarter is `unconfirmed`, or when a recent quarter's diluted
+  numerator departs from basic by more than 5% while another recent quarter is on basic with no
+  reported EPS to check it. A filer whose fourth quarter cannot be confirmed this way, or whose
+  filed diluted figure is more than 50% from basic with no EPS (exchangeable-unit filers such as
+  TPG), is withheld rather than estimated. Not detected: an adjustment in a fourth quarter of a filer that tags
+  no diluted numerator, since no quarterly fourth-quarter EPS is filed.
 - Ordinary equity/share basis must be verified by the caller. ADR conversion, complex capital
   structures, subsequent splits and corporate actions require the existing production share-basis
   resolver before any rollout. The research adapter is not a universal security master.
@@ -128,7 +156,7 @@ The historical evaluator now reports the reason/count for every withheld cutoff,
 
 MAPE remains restricted to positive realized outcomes. A second earnings score is absolute net-income error divided by the trailing-year revenue known at prediction time. It includes zero and negative realized net income, uses the same denominator for model and baseline, and is reported separately from MAPE. Forecasts withheld before the outcome are counted rather than assigned an invented prediction. Revenue has its own positive-outcome eligibility.
 
-A negative quarter reconstructed by subtracting cumulative revenue is withheld as `inconsistent-revenue-basis`; source evidence remains available. In version 2 nothing filled missing quarters or repaired restatements; version 3's one-line reconciliation (above) does so only under its income-statement condition. Directly filed negative revenue still fails the existing positive-revenue guard. Extreme-growth guards remain unchanged pending a verified alternative. Version 3 narrows the SIC exclusion, adds the interest-spread exclusion and the one-line revenue reconciliation in the adapter, and adds the adjacent-quarter share check to the engine. Forecast coefficients are unchanged; see VALIDATION.md, "Version 3 coverage revision".
+A negative quarter reconstructed by subtracting cumulative revenue is withheld as `inconsistent-revenue-basis`; source evidence remains available. In version 2 nothing filled missing quarters or repaired restatements; version 3's one-line reconciliation (above) does so only under its income-statement condition. Directly filed negative revenue still fails the existing positive-revenue guard. Extreme-growth guards remain unchanged pending a verified alternative. Version 3 narrows the SIC exclusion, adds the interest-spread exclusion and the one-line revenue reconciliation in the adapter, and adds the adjacent-quarter share check to the engine. Forecast coefficients are unchanged; see VALIDATION.md, "Version 3 coverage revision". Version 4 changes only the earnings numerator and adds its basis check (the reconciliation guard now reads that numerator); see VALIDATION.md, "Version 4 diluted earnings numerator".
 
 The offline `scripts/compare-history.mjs` compares this checkout with a frozen baseline checkout. Supply a JSON manifest of `{ "symbol": "EXAMPLE", "cik": "0000000001" }` rows and raw SEC snapshots named by ten-digit CIK. It deduplicates issuers, excludes all share classes of prior development firms, then sorts by SHA-256 of `forward-v2-validation:` plus padded CIK. The first 30 issuers are development and the next 30 are holdout; choose the split before inspecting outcomes. It reports paired errors for identical cutoffs, horizons, realized outcomes and baselines, both pooled and with equal company weights.
 
