@@ -92,16 +92,25 @@ forecasts and guidance fiscal-period conversion are outside this first research 
 No network, secrets, production writes or scheduled jobs are inside the evaluator. Supply raw
 SEC companyfacts JSON files named by ticker, enriched with `sic` from the same issuer's SEC
 submissions. Any symbol with appropriate evidence can be used; there is no maintained ticker list.
-Retain these input snapshots outside Git because SEC companyfacts changes as filings arrive.
+Keep these inputs outside Git; SEC Company Facts grows as filings arrive (see the store below).
 The report records a SHA-256 fingerprint of each parsed raw companyfacts input.
 
 `scripts/refresh-sec-store.mjs` keeps such a store: one enriched Company Facts file per CIK, links
-by ticker under `by-symbol/` for the evaluator, and `index.json` with each issuer's latest filing,
-fetch time and SHA-256. A refresh reads each issuer's small submissions record and downloads its
-Company Facts again only when it has filed since the last fetch (`--force` downloads all).
-Company Facts keeps every filed value with its filing date, so one current copy reproduces any
-earlier cutoff; only a fact SEC later withdraws or reprocesses is lost, and the reports' input
-fingerprints show when that has happened. Keep the store outside the repository.
+by ticker under `by-symbol/` for the evaluator, and `index.json` with each issuer's newest
+periodic report, fetch time and SHA-256. A refresh reads each issuer's small submissions record and
+downloads its Company Facts again only when the newest 10-K, 10-Q, 20-F or 40-F with XBRL (or an
+amendment) is not yet in the stored copy. A report accepted before SEC adds it to Company Facts
+stays pending and is fetched again on each run until it appears, or for 30 days. Other filings do
+not trigger a download; `--force` downloads all. SEC's 403 stops the run; 429 and server errors are
+retried. Only one refresh runs at a time, and links and index symbols follow the manifest.
+
+Company Facts keeps each filing's value with its filing date, including values later restated, and
+the adapter filters every namespace by that date, so the current copy rebuilds the facts known at
+an earlier cutoff. It does not rebuild: a fact SEC has since withdrawn or reprocessed; facts filed
+under a predecessor CIK; and the SIC, entity name and ticker-to-CIK mapping, which are current
+values. Each refresh overwrites the file, so an earlier report's SHA-256 identifies the exact input
+it read but cannot recover it. Copy the store first when an evaluation must be replayed byte for
+byte. Keep the store outside the repository.
 
 ```sh
 SEC_USER_AGENT="Your Name contact@example.com" node scripts/refresh-sec-store.mjs \
