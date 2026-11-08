@@ -95,6 +95,23 @@ submissions. Any symbol with appropriate evidence can be used; there is no maint
 Retain these input snapshots outside Git because SEC companyfacts changes as filings arrive.
 The report records a SHA-256 fingerprint of each parsed raw companyfacts input.
 
+`scripts/refresh-sec-store.mjs` keeps such a store: one enriched Company Facts file per CIK, links
+by ticker under `by-symbol/` for the evaluator, and `index.json` with each issuer's latest filing,
+fetch time and SHA-256. A refresh reads each issuer's small submissions record and downloads its
+Company Facts again only when it has filed since the last fetch (`--force` downloads all).
+Company Facts keeps every filed value with its filing date, so one current copy reproduces any
+earlier cutoff; only a fact SEC later withdraws or reprocesses is lost, and the reports' input
+fingerprints show when that has happened. Keep the store outside the repository.
+
+```sh
+SEC_USER_AGENT="Your Name contact@example.com" node scripts/refresh-sec-store.mjs \
+  --store ~/data/sec-companyfacts --manifest ~/data/sec-companyfacts/manifest.json
+```
+
+The manifest has the same `{ "symbol": ..., "cik": ... }` rows as `compare-history.mjs` below.
+Pass the store as `--input-dir` to `compare-history.mjs`, and its `by-symbol/` directory to the
+evaluator.
+
 ```sh
 node scripts/evaluate-forward-valuation.mjs \
   --input-dir /path/to/research-inputs --symbols AAPL,MSFT \
