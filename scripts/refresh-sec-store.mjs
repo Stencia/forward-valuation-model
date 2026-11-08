@@ -156,12 +156,18 @@ export async function refreshStore({ store, entries, userAgent, force = false, p
         const intact = Boolean(stat && prior?.sha256 && (prior.size === stat.size && prior.mtimeMs === stat.mtimeMs
           || prior.sha256 === sha256(readFileSync(file))));
         if (intact) Object.assign(prior, { size: stat.size, mtimeMs: stat.mtimeMs });
+        // An entry indexed before gaps were tracked is checked against its stored copy once.
+        if (intact && !Array.isArray(prior.missingReports)) {
+          prior.missingReports = missingFrom(factsAccessions(JSON.parse(readFileSync(file, 'utf8'))));
+        }
         // Settled: the indexed copy contains the newest report, or was downloaded more than 30 days
         // after that report's acceptance and still lacks it.
         // With no financial report yet, an entry that has none recorded is settled.
         const settled = (entry) => !latest ? !entry?.latestFinancial : entry?.latestFinancial?.accession === latest.accession
           && (entry.inFacts || Date.parse(entry.fetchedAt) - Date.parse(latest.acceptedAt) > SETTLE_DAYS * DAY);
-        const gapsDue = (entry) => (entry?.missingReports || []).some((x) => x.accession !== latest?.accession || entry.inFacts)
+        // Any listed gap, the newest report included once settled, is rechecked weekly. (A report
+        // still awaited never reaches this: its issuer is not current and is downloaded anyway.)
+        const gapsDue = (entry) => (entry?.missingReports || []).length > 0
           && Date.parse(now()) - Date.parse(entry.fetchedAt) > RECHECK_DAYS * DAY;
         let current = !force && intact && settled(prior) && !gapsDue(prior);
         if (!current && !force && intact && latest && !gapsDue(prior)) {
@@ -174,9 +180,6 @@ export async function refreshStore({ store, entries, userAgent, force = false, p
         // Filings but no Company Facts yet: retried like a pending report, then until the next one.
         if (!current && !force && !stat && prior?.noFacts && settled(prior)) {
           summary.noFacts.push(cik); continue;
-        }
-        if (current && !Array.isArray(index[cik].missingReports)) {
-          index[cik].missingReports = missingFrom(factsAccessions(JSON.parse(readFileSync(file, 'utf8'))));
         }
         if (current) {
           summary.unchanged.push(cik);

@@ -311,4 +311,19 @@ test('a registrant with no financial report and no Company Facts is not retried 
   assert.deepEqual(second.failed, []); assert.deepEqual(second.noFacts, ['0000000005']);
   assert.equal(sec.factsCalls(), 0);
 }));
+test('a newest report settled as missing is rechecked weekly and cleared once SEC adds it', () => withStore(async (store) => {
+  // Johnson Controls: a 10-Q of 2026-07-29 still absent from Company Facts on 2026-11-08.
+  const sec = fakeSec();
+  sec.file('0000000002', 'a-10q-jci', '10-Q', '2026-07-29T15:12:00.000Z');
+  const day = (d) => ({ now: () => d });
+  const settledRun = await run(store, sec, ENTRIES(), day('2026-11-08T00:00:00.000Z'));
+  assert.deepEqual(settledRun.incomplete.map((x) => x.missing.map((m) => m.accession)), [['a-10q-jci']]);
+  assert.deepEqual(settledRun.pending, []);
+  assert.equal(JSON.parse(readFileSync(join(store, 'index.json'), 'utf8'))['0000000002'].latestFinancial.accession, 'a-10q-jci');
+  sec.issuers['0000000002'].facts.push('a-10q-jci');
+  sec.calls.length = 0;
+  const recheck = await run(store, sec, ENTRIES(), day('2026-11-16T00:00:00.000Z'));
+  assert.equal(sec.factsCalls(), 1);
+  assert.deepEqual(recheck.incomplete, []);
+}));
 
