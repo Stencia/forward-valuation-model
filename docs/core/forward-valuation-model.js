@@ -9,6 +9,10 @@ const sum = (xs) => xs.reduce((a, b) => a + b, 0);
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); const n = s.length; return n % 2 ? s[n >> 1] : (s[n / 2 - 1] + s[n / 2]) / 2; };
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const finite = (v) => typeof v === 'number' && Number.isFinite(v);
+// Net income over diluted shares agrees with a filed diluted EPS within cent rounding and small
+// two-class allocations (half a cent plus 5%).
+export const matchesReportedEps = (net, shares, eps) => finite(net) && finite(shares) && shares > 0 && finite(eps)
+  && Math.abs(net / shares - eps) <= 0.005 + 0.05 * Math.abs(eps);
 
 // Inputs are eight consecutive, point-in-time quarters on one currency/share basis.
 // The caller resolves filings and corporate actions before invoking this price-free function.
@@ -69,7 +73,7 @@ export function forecastFundamentals({ quarters, asOf, currency, eligibility = {
   // and small two-class allocations, or when the filer's diluted numerator departs from basic in
   // one recent quarter while another stays on basic with no reported EPS to check it against.
   const epsMismatch = recent.some((q) => finite(q.reportedDilutedEPS)
-    && Math.abs(q.netIncome / q.dilutedShares - q.reportedDilutedEPS) > 0.005 + 0.05 * Math.abs(q.reportedDilutedEPS));
+    && !matchesReportedEps(q.netIncome, q.dilutedShares, q.reportedDilutedEPS));
   const adjusted = recent.some((q) => q.earningsNumerator === 'diluted' && finite(q.basicNetIncome)
     && Math.abs(q.netIncome - q.basicNetIncome) > 0.05 * Math.abs(q.basicNetIncome));
   const unchecked = recent.some((q) => q.earningsNumerator === 'basic' && !finite(q.reportedDilutedEPS));

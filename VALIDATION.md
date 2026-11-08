@@ -8,11 +8,12 @@ Prompt: TeraWulf's 10-Q for the quarter ended September 30, 2026 reports 709.9M 
 
 | Issuer | Version 3 | Version 4 | Cause |
 | --- | --- | --- | --- |
-| WYNN | forward EPS 3.84 | forward EPS 3.59 | Diluted numerator reflects a subsidiary's dilutive securities (Q1 2026: 108.0M against 120.5M basic; 108.0M / 103.8M shares = the reported 1.04) |
-| TSCO | P/E withheld, common-earnings reconciliation | forward EPS 1.92 | Basic net income for the quarter ended December 27, 2025 is the full year (1,096M) under quarter dates; the diluted concept differences to 227.4M, which reconciles to pretax income less tax |
+| WYNN | forward EPS 3.84 | P/E withheld, diluted-earnings-basis | Q1 to Q3 diluted numerators reflect a subsidiary's dilutive securities (Q1 2026: 108.0M against 120.5M basic; 108.0M / 103.8M shares = the reported 1.04); the fourth quarter is derived, so stays on basic with nothing to check it |
 | ADI | 19 scored earnings windows | 18 | The 2019-08-21 cutoff derives fiscal 2018's fourth quarter from an annual on the old revenue standard less nine months restated to the new one (393M, not 433M); the reported 1.15 EPS exposes it |
 
-Realized earnings outcomes also use the diluted numerator. On windows with identical inputs, outcomes and baselines, errors are identical: development 651 revenue and 202 earnings windows, holdout 669 and 259. In the other scored windows the realized outcome moves by at most 1M (TSCO, TTWO, VLO) and the error is unchanged to four decimals. Among unscored windows, TSCO's 2025 realized outcomes fall from 1.96B to 1.10B, without the mis-tagged full year. The same limits apply as for earlier versions.
+Fourth quarters stay on basic because a differenced diluted numerator is unreliable: Blackstone's exchangeable units were dilutive in the first three quarters of 2017 and antidilutive for the year, so its year less nine months gives -643M against 281.6M basic and a reported fourth-quarter EPS of 0.42.
+
+Realized earnings outcomes also use the diluted numerator. On windows with identical inputs, outcomes and baselines, errors are identical: development 651 revenue and 203 earnings windows, holdout 669 and 265. VLO's four other scored windows move by 1M and their errors are unchanged to four decimals. Unscored realized outcomes move for BX (3 windows, +370M to +698M, its unit exchange add-back), WYNN (10, -11M to -25M), ALB (2, +42M), ON, NEE, MGM, NUE and TTWO (each within 3M). The same limits apply as for earlier versions.
 
 ## Version 3 coverage revision
 
