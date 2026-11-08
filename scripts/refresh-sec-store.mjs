@@ -21,9 +21,13 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 // Periodic reports carrying XBRL financial statements. Other filings (8-K, Form 4, 144) do not
 // change the statements this model reads and do not trigger a download.
 const FINANCIAL_FORMS = /^(10-KT?|10-QT?|20-F|40-F)(\/A)?$/;
-// A financial report that a download this many days after its acceptance still lacks (a
-// cover-page-only amendment) stops being waited for, so the issuer is not downloaded every run.
+// SEC's Company Facts does not always absorb a filed report: on 2026-11-08, 30 of 500 S&P 500
+// issuers lacked one to three recent 10-Qs (C, NEE, AEP, JCI among them) while the rest of each
+// file was current. A report that a download this many days after its acceptance still lacks is no
+// longer waited for, so the issuer is not downloaded every run, and is reported as incomplete.
 const SETTLE_DAYS = 30;
+// Financial reports this recent are checked against the stored copy and listed when missing.
+const CHECK_DAYS = 400;
 const MAX_RETRY_AFTER_S = 120;
 
 export class FatalSecError extends Error {}
@@ -44,19 +48,22 @@ export function parseManifest(rows) {
 
 // The newest periodic report with XBRL on the issuer's submissions record. The newest filings are
 // always in `filings.recent`; older ones overflow into `filings.files`, which is not needed here.
-export function latestFinancialReport(submissions) {
+export function financialReports(submissions) {
   const r = submissions?.filings?.recent || {};
   const rows = (r.accessionNumber || []).map((accession, i) => ({ accession, form: r.form?.[i],
     acceptedAt: r.acceptanceDateTime?.[i] || r.filingDate?.[i] || '', xbrl: r.isXBRL?.[i] }));
   return rows.filter((x) => FINANCIAL_FORMS.test(x.form || '') && Number(x.xbrl) === 1 && x.acceptedAt)
-    .sort((a, b) => a.acceptedAt.localeCompare(b.acceptedAt)).map(({ accession, form, acceptedAt }) => ({ accession, form, acceptedAt })).at(-1) ?? null;
+    .sort((a, b) => a.acceptedAt.localeCompare(b.acceptedAt)).map(({ accession, form, acceptedAt }) => ({ accession, form, acceptedAt }));
 }
+export const latestFinancialReport = (submissions) => financialReports(submissions).at(-1) ?? null;
 
-export function factsContain(facts, accession) {
+export function factsAccessions(facts) {
+  const out = new Set();
   for (const concepts of Object.values(facts?.facts || {})) for (const c of Object.values(concepts))
-    for (const points of Object.values(c.units || {})) if (points.some((p) => p.accn === accession)) return true;
-  return false;
+    for (const points of Object.values(c.units || {})) for (const p of points) out.add(p.accn);
+  return out;
 }
+export const factsContain = (facts, accession) => factsAccessions(facts).has(accession);
 
 async function getJson(url, { fetchImpl, userAgent, sleep, timeoutMs, attempts = 5 }) {
   for (let i = 1; ; i++) {
@@ -95,13 +102,15 @@ const held = new Set();
 function acquireLock(store) {
   const lock = join(store, '.lock');
   if (held.has(lock)) throw new Error(`A refresh in this process already holds ${lock}`);
+  // A lock naming this process that this process does not hold is left from an earlier run whose
+  // pid was reused.
   for (let attempt = 0; attempt < 2; attempt++) {
     try { writeFileSync(lock, String(process.pid), { flag: 'wx' }); held.add(lock); return lock; }
     catch (error) { if (error.code !== 'EEXIST') throw error; }
     let pid = NaN;
     try { pid = Number(readFileSync(lock, 'utf8').trim()); } catch {}
     let alive = false;
-    if (Number.isInteger(pid) && pid > 0) {
+    if (Number.isInteger(pid) && pid > 0 && pid !== process.pid) {
       try { process.kill(pid, 0); alive = true; } catch (error) { alive = error.code === 'EPERM'; }
     }
     if (alive) throw new Error(`Another refresh (pid ${pid}) holds ${lock}`);
@@ -120,7 +129,7 @@ export async function refreshStore({ store, entries, userAgent, force = false, p
   const lock = acquireLock(store);
   const indexPath = join(store, 'index.json');
   const index = existsSync(indexPath) ? JSON.parse(readFileSync(indexPath, 'utf8')) : {};
-  const summary = { fetched: [], unchanged: [], pending: [], noFacts: [], missing: [], failed: [], stopped: null };
+  const summary = { fetched: [], unchanged: [], pending: [], noFacts: [], missing: [], failed: [], incomplete: [], stopped: null };
   const save = () => writeAtomic(indexPath, JSON.stringify(index, null, 2) + '\n');
   const http = { fetchImpl, userAgent, sleep, timeoutMs };
   const owner = new Map(entries.flatMap(({ cik, symbols }) => symbols.map((s) => [s, cik])));
@@ -131,8 +140,12 @@ export async function refreshStore({ store, entries, userAgent, force = false, p
         const submissions = await getJson(`${SEC}/submissions/CIK${cik}.json`, http);
         await sleep(pauseMs);
         if (!submissions) { summary.missing.push(cik); continue; }
-        const latest = latestFinancialReport(submissions);
+        const reports = financialReports(submissions);
+        const latest = reports.at(-1) ?? null;
+        const recentReports = reports.filter((x) => Date.parse(now()) - Date.parse(x.acceptedAt) <= CHECK_DAYS * DAY);
+        const missingFrom = (accessions) => recentReports.filter((x) => !accessions.has(x.accession));
         const prior = index[cik];
+        if (prior) delete prior.latestFiling;
         // The stored file is the one indexed: same size and modification time as recorded, or
         // (for an entry without them, or a touched file) the same SHA-256.
         const stat = existsSync(file) ? statSync(file) : null;
@@ -144,13 +157,19 @@ export async function refreshStore({ store, entries, userAgent, force = false, p
         const settled = (entry) => entry?.latestFinancial?.accession === latest?.accession
           && (entry.inFacts || Date.parse(entry.fetchedAt) - Date.parse(latest.acceptedAt) > SETTLE_DAYS * DAY);
         let current = !force && intact && (latest ? settled(prior) : !prior.latestFinancial);
-        if (!current && !force && intact && latest && factsContain(JSON.parse(readFileSync(file, 'utf8')), latest.accession)) {
-          index[cik] = { ...prior, latestFinancial: latest, inFacts: true };
-          current = true;
+        if (!current && !force && intact && latest) {
+          const accessions = factsAccessions(JSON.parse(readFileSync(file, 'utf8')));
+          if (accessions.has(latest.accession)) {
+            index[cik] = { ...prior, latestFinancial: latest, inFacts: true, missingReports: missingFrom(accessions) };
+            current = true;
+          }
         }
-        // An issuer with filings but no XBRL data yet: wait for its next financial report.
-        if (!current && !force && !stat && prior?.noFacts && prior.latestFinancial?.accession === latest?.accession) {
+        // Filings but no Company Facts yet: retried like a pending report, then until the next one.
+        if (!current && !force && !stat && prior?.noFacts && settled(prior)) {
           summary.noFacts.push(cik); continue;
+        }
+        if (current && !Array.isArray(index[cik].missingReports)) {
+          index[cik].missingReports = missingFrom(factsAccessions(JSON.parse(readFileSync(file, 'utf8'))));
         }
         if (current) {
           summary.unchanged.push(cik);
@@ -158,20 +177,27 @@ export async function refreshStore({ store, entries, userAgent, force = false, p
           const facts = await getJson(`${SEC}/api/xbrl/companyfacts/CIK${cik}.json`, http);
           await sleep(pauseMs);
           if (!facts) {
+            // A 404 for an issuer already stored is SEC failing, not a new registrant: keep the copy.
+            if (stat) throw new Error(`Company Facts returned 404 for an issuer already stored`);
             index[cik] = { symbols, name: submissions.name ?? null, latestFinancial: latest, noFacts: true, fetchedAt: now() };
             summary.noFacts.push(cik); save(); continue;
           }
           const body = JSON.stringify({ ...facts, sic: submissions.sic ?? null });
           writeAtomic(file, body);
           const written = statSync(file);
-          const inFacts = latest ? factsContain(facts, latest.accession) : true;
+          const accessions = factsAccessions(facts);
+          const inFacts = latest ? accessions.has(latest.accession) : true;
           index[cik] = { symbols, name: submissions.name ?? facts.entityName ?? null, latestFinancial: latest, inFacts,
-            fetchedAt: now(), sha256: sha256(body), size: written.size, mtimeMs: written.mtimeMs };
+            missingReports: missingFrom(accessions), fetchedAt: now(), sha256: sha256(body), size: written.size, mtimeMs: written.mtimeMs };
           const waiting = latest && !settled(index[cik]);
           (waiting ? summary.pending : summary.fetched).push(cik);
           log(`${waiting ? 'pending' : 'fetched'} ${cik} ${symbols.join(',')}`);
         }
         index[cik].symbols = symbols;
+        // Reports SEC has not put in Company Facts, apart from a newest one still awaited.
+        const waitingFor = latest && !settled(index[cik]) ? latest.accession : null;
+        const gaps = (index[cik].missingReports || []).filter((x) => x.accession !== waitingFor);
+        if (gaps.length) summary.incomplete.push({ cik, symbols, missing: gaps });
         for (const symbol of symbols) linkAtomic(join(store, 'by-symbol', `${symbol}.json`), `../${cik}.json`);
         save();
       } catch (error) {
@@ -226,7 +252,8 @@ export async function main(argv, env = process.env) {
   const summary = await refreshStore({ store: resolve(args.store), entries, userAgent, force: args.force, prune: args.prune,
     log: (line) => console.error(line) });
   console.log(JSON.stringify({ issuers: entries.length, fetched: summary.fetched.length, unchanged: summary.unchanged.length,
-    pending: summary.pending, noFacts: summary.noFacts, missing: summary.missing, failed: summary.failed, stopped: summary.stopped }));
+    pending: summary.pending, noFacts: summary.noFacts, missing: summary.missing,
+    incomplete: summary.incomplete.map((x) => `${x.symbols.join(',')}: ${x.missing.map((m) => `${m.form} ${m.acceptedAt.slice(0, 10)}`).join(', ')}`), failed: summary.failed, stopped: summary.stopped }));
   // Missing issuers mean a stale manifest; pending ones resolve on a later run.
   return summary.stopped || summary.failed.length || summary.missing.length ? 1 : 0;
 }

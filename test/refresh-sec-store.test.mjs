@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { latestFinancialReport, main, parseArgs, parseManifest, refreshStore } from '../scripts/refresh-sec-store.mjs';
@@ -81,11 +81,18 @@ test('a stored file that already holds the newest report is not downloaded again
   await run(store, sec, ENTRIES());
   // An index entry from before reports were tracked: the stored file is checked instead.
   const indexPath = join(store, 'index.json'); const index = JSON.parse(readFileSync(indexPath, 'utf8'));
-  delete index['0000000001'].latestFinancial; delete index['0000000001'].inFacts;
+  for (const key of ['latestFinancial', 'inFacts', 'size', 'mtimeMs', 'missingReports']) delete index['0000000001'][key];
+  index['0000000001'].latestFiling = '2026-08-01T16:00:00.000Z';
   writeFileSync(indexPath, JSON.stringify(index));
   sec.calls.length = 0; await run(store, sec, ENTRIES());
   assert.equal(sec.factsCalls(), 0);
-  assert.equal(JSON.parse(readFileSync(indexPath, 'utf8'))['0000000001'].inFacts, true);
+  const migrated = JSON.parse(readFileSync(indexPath, 'utf8'))['0000000001'];
+  assert.equal(migrated.inFacts, true); assert.equal(migrated.latestFiling, undefined);
+  assert.deepEqual(migrated.missingReports, []);
+  // A file touched without changing its bytes is not downloaded again.
+  utimesSync(join(store, '0000000001.json'), new Date(), new Date('2027-01-01'));
+  sec.calls.length = 0; await run(store, sec, ENTRIES());
+  assert.equal(sec.factsCalls(), 0);
   writeFileSync(join(store, '0000000002.json'), '{}');
   sec.calls.length = 0; await run(store, sec, ENTRIES());
   assert.equal(sec.factsCalls(), 1);
@@ -214,5 +221,62 @@ test('an unreadable lock is stale, and a second refresh in the same process is r
   await new Promise((r) => setTimeout(r, 5));
   await assert.rejects(run(store, sec, ENTRIES()), /already holds/);
   release(); await first;
+}));
+test('reports SEC has left out of Company Facts are listed as incomplete, apart from one still awaited', () => withStore(async (store) => {
+  const sec = fakeSec();
+  // An older 10-Q never absorbed, the newest one present: incomplete.
+  sec.file('0000000001', 'a-10q-gap', '10-Q', '2026-09-01T16:00:00.000Z');
+  sec.file('0000000001', 'a-10q-3', '10-Q', '2026-10-30T16:00:00.000Z');
+  sec.issuers['0000000001'].facts.push('a-10q-3');
+  // The newest report only just accepted: pending, not incomplete.
+  sec.file('0000000002', 'b-10q', '10-Q', '2026-11-06T16:00:00.000Z');
+  const result = await run(store, sec, ENTRIES());
+  assert.deepEqual(result.incomplete.map((x) => [x.cik, x.missing.map((m) => m.accession)]), [['0000000001', ['a-10q-gap']]]);
+  assert.deepEqual(result.pending, ['0000000002']);
+  // A newest report still missing from a download more than 30 days after acceptance is a gap.
+  const late = await run(store, sec, ENTRIES(), { now: () => '2026-12-10T00:00:00.000Z' });
+  assert.deepEqual(late.incomplete.map((x) => x.cik), ['0000000001', '0000000002']);
+  assert.deepEqual(late.pending, []);
+}));
+
+test('Company Facts that appears after a 404 is fetched within the waiting period; a 404 for a stored issuer fails', () => withStore(async (store) => {
+  const sec = fakeSec();
+  sec.issuers['0000000004'] = { filings: [{ accession: 'd-10q', form: '10-Q', acceptedAt: '2026-11-02T00:00:00.000Z' }], facts: ['d-10q'], noFacts: true };
+  const entries = parseManifest([{ symbol: 'DDD', cik: 4 }]);
+  assert.deepEqual((await run(store, sec, entries, { now: () => '2026-11-02T12:00:00.000Z' })).noFacts, ['0000000004']);
+  sec.issuers['0000000004'].noFacts = false;
+  assert.deepEqual((await run(store, sec, entries, { now: () => '2026-11-03T12:00:00.000Z' })).fetched, ['0000000004']);
+  sec.issuers['0000000004'].noFacts = true;
+  const before = JSON.parse(readFileSync(join(store, 'index.json'), 'utf8'))['0000000004'];
+  sec.file('0000000004', 'd-10q-2', '10-Q', '2026-11-05T00:00:00.000Z');
+  const failed = await run(store, sec, entries, { now: () => '2026-11-06T00:00:00.000Z' });
+  assert.equal(failed.failed.length, 1);
+  assert.deepEqual(JSON.parse(readFileSync(join(store, 'index.json'), 'utf8'))['0000000004'].sha256, before.sha256);
+}));
+
+test('a lock left by an earlier run with this pid is stale, and a failed issuer keeps the request pacing', () => withStore(async (store) => {
+  const sec = fakeSec();
+  writeFileSync(join(store, '.lock'), String(process.pid));
+  assert.equal((await run(store, sec, ENTRIES())).failed.length, 0);
+  const slept = [];
+  const broken = { fetch: async () => ({ ok: false, status: 400, headers: new Map() }) };
+  await run(store, broken, ENTRIES(), { sleep: async (ms) => { slept.push(ms); } });
+  assert.equal(slept.filter((ms) => ms === 150).length, 2);
+}));
+test('entries indexed before gaps were tracked are checked once, and an unchanged file is not re-hashed', () => withStore(async (store) => {
+  const sec = fakeSec();
+  sec.file('0000000001', 'a-10q-gap', '10-Q', '2026-09-01T16:00:00.000Z');
+  sec.file('0000000001', 'a-10q-3', '10-Q', '2026-10-30T16:00:00.000Z');
+  sec.issuers['0000000001'].facts.push('a-10q-3');
+  await run(store, sec, ENTRIES());
+  const indexPath = join(store, 'index.json'); const index = JSON.parse(readFileSync(indexPath, 'utf8'));
+  delete index['0000000001'].missingReports;
+  // Same size and modification time: the recorded hash is trusted without reading the file.
+  index['0000000002'].sha256 = '0'.repeat(64);
+  writeFileSync(indexPath, JSON.stringify(index));
+  sec.calls.length = 0;
+  const result = await run(store, sec, ENTRIES());
+  assert.deepEqual(result.incomplete.map((x) => x.cik), ['0000000001']);
+  assert.equal(sec.factsCalls(), 0);
 }));
 
